@@ -1,0 +1,100 @@
+# IoT Platform Configuration
+server:
+  name: iot-platform
+  env: development  # development | staging | production
+  port: 8080
+
+# MySQL - 业务数据
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: your_password
+  database: iot_platform
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 3600s
+  log_level: info  # silent | error | warn | info
+
+# MongoDB - 设备时序数据
+mongodb:
+  uri: mongodb://127.0.0.1:27017
+  database: iot_platform
+  max_pool_size: 100
+  min_pool_size: 10
+  timeout: 10s
+
+# Redis - 缓存/设备状态
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+
+# Kafka - 消息队列
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  consumer_group: iot-platform
+  topics:
+    device_data_report: device.data.report
+    device_event_online: device.event.online
+    device_event_offline: device.event.offline
+    device_event_fault: device.event.fault
+    device_command_send: device.command.send
+    device_command_result: device.command.result
+    alert_triggered: alert.triggered
+    alert_resolved: alert.resolved
+    device_ota_upgrade: device.ota.upgrade
+    device_ota_progress: device.ota.progress
+    device_ota_result: device.ota.result
+
+# TCP Server - 设备直连
+tcp:
+  enabled: true
+  port: 7000
+  max_connections: 50000
+  read_timeout: 60s
+  write_timeout: 10s
+  heartbeat_interval: 30s
+
+# MQTT - 设备MQTT接入
+mqtt:
+  enabled: false
+  broker: tcp://127.0.0.1:1883
+  client_id: iot-platform-connector
+  username: admin
+  password: public
+
+# JWT
+jwt:
+  secret: your-jwt-secret-key-change-in-production
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h  # 7 days
+
+# WebSocket
+websocket:
+  heartbeat_interval: 30s
+  write_timeout: 10s
+
+# Logging
+log:
+  level: info  # debug | info | warn | error
+  format: json  # json | text
+  output: stdout  # stdout | file
+  file_path: logs/app.log
+
+# Alert
+alert:
+  device_offline_timeout: 120s  # 设备离线判定超时
+  check_interval: 30s           # 离线检测间隔
+
+# Microservices ports
+services:
+  device_service: 8081
+  command_service: 8082
+  alert_service: 8083
+  user_service: 8084
+  report_service: 8085
+  protocol_service: 8086
