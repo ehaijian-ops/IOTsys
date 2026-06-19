@@ -15,6 +15,7 @@ import (
 	deviceHandler "iot-platform/internal/device/handler"
 	deviceRepo "iot-platform/internal/device/repository"
 	deviceService "iot-platform/internal/device/service"
+	"iot-platform/internal/sse"
 	"iot-platform/migrations"
 	"iot-platform/pkg/auth"
 	"iot-platform/pkg/config"
@@ -62,22 +63,37 @@ func main() {
 	}
 	defer redis.Close()
 
-	if err := mongodb.Init(cfg.MongoDB); err != nil {
-		logger.Fatal("Failed to init MongoDB", zap.Error(err))
+	// MongoDB - 可选，失败时降级运行
+	if cfg.MongoDB.URI != "" {
+		if err := mongodb.Init(cfg.MongoDB); err != nil {
+			logger.Warn("MongoDB init failed, running without MongoDB", zap.Error(err))
+		} else {
+			defer mongodb.Close()
+		}
+	} else {
+		logger.Info("MongoDB not configured, skipping")
 	}
-	defer mongodb.Close()
 
 	// 4. 数据库迁移
 	if err := migrations.AutoMigrate(mysql.DB); err != nil {
 		logger.Fatal("Failed to migrate database", zap.Error(err))
 	}
 
-	// 5. 初始化消息队列
-	producer := kafka.NewProducer(cfg.Kafka)
-	defer producer.Close()
+	// 5. 初始化消息队列 - Kafka 不可用时使用 NoopProducer 降级
+	var producer kafka.MessagePublisher
+	if len(cfg.Kafka.Brokers) > 0 && cfg.Kafka.Brokers[0] != "" {
+		producer = kafka.NewProducer(cfg.Kafka)
+		defer producer.Close()
+	} else {
+		producer = kafka.NewNoopProducer()
+		defer producer.Close()
+	}
 
-	// 6. 初始化 TCP 设备接入服务器
-	tcpSrv := tcpserver.NewServer(cfg.TCP, producer)
+	// 6. 初始化 SSE Hub（实时日志推送）
+	sseHub := sse.NewHub()
+
+	// 7. 初始化 TCP 设备接入服务器
+	tcpSrv := tcpserver.NewServer(cfg.TCP, producer, sseHub)
 	if cfg.TCP.Enabled {
 		if err := tcpSrv.Start(); err != nil {
 			logger.Fatal("Failed to start TCP server", zap.Error(err))
@@ -85,7 +101,7 @@ func main() {
 		defer tcpSrv.Stop()
 	}
 
-	// 7. 初始化业务服务
+	// 8. 初始化业务服务
 	// 设备管理
 	devRepo := deviceRepo.NewDeviceRepository(mysql.DB)
 	devSvc := deviceService.NewDeviceService(devRepo)
@@ -95,10 +111,10 @@ func main() {
 	cmdSvc := cmdService.NewCommandService(mysql.DB, producer, tcpSrv)
 	cmdH := cmdHandler.NewCommandHandler(cmdSvc)
 
-	// 8. 初始化认证
+	// 9. 初始化认证
 	jwtManager := auth.NewJWTManager(cfg.JWT)
 
-	// 9. 创建 HTTP 路由
+	// 10. 创建 HTTP 路由
 	router := gin.New()
 
 	// 中间件
@@ -126,6 +142,9 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"message": "login endpoint"})
 		})
 
+		// 实时日志 SSE 流（公开，前端 EventSource 不支持自定义 Header）
+		v1.GET("/devices/logs/stream", sseHub.HandleSSE)
+
 		// 需要认证的接口
 		authGroup := v1.Group("")
 		authGroup.Use(auth.AuthMiddleware(jwtManager))
@@ -149,7 +168,7 @@ func main() {
 		}
 	}
 
-	// 10. 启动 HTTP 服务器
+	// 11. 启动 HTTP 服务器
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler:      router,

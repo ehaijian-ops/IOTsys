@@ -2,18 +2,17 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# 安装依赖
-COPY go.mod go.sum ./
-RUN go mod download
-
-# 复制源码
+# Copy vendor directory and source code (offline build, no network needed)
 COPY . .
 
-# 编译
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /iot-server ./cmd/main.go
+# Build with vendored dependencies (no network required)
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags="-w -s" -o /iot-server ./cmd/main.go
 
-# 运行阶段
+# Runtime stage
 FROM alpine:3.19
+
+# Use Aliyun mirror for apk
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 RUN apk add --no-cache ca-certificates tzdata
 ENV TZ=Asia/Shanghai
@@ -21,7 +20,7 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app
 
 COPY --from=builder /iot-server .
-COPY config/config.example.yaml /app/config/config.yaml
+COPY config/config.prod.yaml config/config.yaml
 
 EXPOSE 8080 7000
 

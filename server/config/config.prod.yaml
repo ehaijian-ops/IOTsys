@@ -1,0 +1,88 @@
+# IoT Platform - Production Config
+server:
+  name: iot-platform
+  env: production
+  port: 8080
+
+mysql:
+  host: iot-mysql
+  port: 3306
+  user: root
+  password: iot_password_2024
+  database: iot_platform
+  max_open_conns: 50
+  max_idle_conns: 5
+  conn_max_lifetime: 3600s
+  log_level: warn
+
+mongodb:
+  uri: ""
+  database: iot_platform
+  max_pool_size: 20
+  min_pool_size: 2
+  timeout: 10s
+
+redis:
+  addr: iot-redis:6379
+  password: ""
+  db: 0
+  pool_size: 50
+  min_idle_conns: 5
+
+kafka:
+  brokers: []
+  consumer_group: iot-platform
+  topics:
+    device_data_report: device.data.report
+    device_event_online: device.event.online
+    device_event_offline: device.event.offline
+    device_event_fault: device.event.fault
+    device_command_send: device.command.send
+    device_command_result: device.command.result
+    alert_triggered: alert.triggered
+    alert_resolved: alert.resolved
+    device_ota_upgrade: device.ota.upgrade
+    device_ota_progress: device.ota.progress
+    device_ota_result: device.ota.result
+
+tcp:
+  enabled: true
+  port: 7000
+  max_connections: 10000
+  read_timeout: 60s
+  write_timeout: 10s
+  heartbeat_interval: 30s
+
+mqtt:
+  enabled: false
+  broker: tcp://127.0.0.1:1883
+  client_id: iot-platform-connector
+  username: admin
+  password: public
+
+jwt:
+  secret: iot-platform-prod-secret-2024-change-me
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h
+
+websocket:
+  heartbeat_interval: 30s
+  write_timeout: 10s
+
+log:
+  level: info
+  format: json
+  output: stdout
+  file_path: logs/app.log
+
+alert:
+  device_offline_timeout: 120s
+  check_interval: 30s
+
+services:
+  device_service: 8081
+  command_service: 8082
+  alert_service: 8083
+  user_service: 8084
+  report_service: 8085
+  protocol_service: 8086

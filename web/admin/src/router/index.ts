@@ -62,6 +62,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/reports/index.vue'),
         meta: { title: '数据报表', icon: 'DataAnalysis' },
       },
+      {
+        path: 'logs',
+        name: 'Logs',
+        component: () => import('@/views/logs/index.vue'),
+        meta: { title: '实时日志', icon: 'Tickets' },
+      },
     ],
   },
 ]

@@ -10,6 +10,7 @@ import (
 
 	"iot-platform/internal/protocol/engine"
 	"iot-platform/internal/protocol/model"
+	"iot-platform/internal/sse"
 	"iot-platform/pkg/config"
 	"iot-platform/pkg/logger"
 	redisClient "iot-platform/pkg/database/redis"
@@ -28,7 +29,8 @@ type Server struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
-	producer  *kafka.Producer
+	producer  kafka.MessagePublisher
+	sseHub    *sse.Hub
 }
 
 // Session 设备会话
@@ -45,13 +47,14 @@ type Session struct {
 }
 
 // NewServer 创建 TCP 服务器
-func NewServer(cfg config.TCPConfig, producer *kafka.Producer) *Server {
+func NewServer(cfg config.TCPConfig, producer kafka.MessagePublisher, sseHub *sse.Hub) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
 		cfg:      cfg,
 		ctx:      ctx,
 		cancel:   cancel,
 		producer: producer,
+		sseHub:   sseHub,
 	}
 }
 
@@ -236,6 +239,12 @@ func (s *Server) publishDeviceData(session *Session, stdData *model.StandardData
 		logger.Error("Failed to publish device data to kafka", zap.Error(err))
 	}
 
+	// 推送到 SSE 实时日志
+	if s.sseHub != nil {
+		entry := sse.FromStandardData(stdData, session.RemoteAddr)
+		s.sseHub.Broadcast(entry)
+	}
+
 	logger.Debug("Device data processed",
 		zap.String("device_id", stdData.DeviceID),
 		zap.String("protocol", stdData.Protocol),
@@ -254,7 +263,6 @@ func (s *Server) cacheRealtimeData(ctx context.Context, data *model.StandardData
 		"energy_today":      data.EnergyToday,
 		"temperature":       data.Temperature,
 		"charging_status":   data.ChargingStatus,
-		"charging_progress": data.ChargingProgress,
 		"updated_at":        data.Timestamp.Format(time.RFC3339),
 	}
 

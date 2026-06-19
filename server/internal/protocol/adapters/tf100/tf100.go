@@ -447,7 +447,9 @@ func (a *TF100Adapter) parseChargeProgress(msg *TF100Message, std *model.Standar
 		std.Temperature = float64(msg.DevTem) - 65
 	}
 
-	std.Voltage = float64(msg.Voltage) * 0.1
+	if len(msg.Voltage) > 0 {
+		std.Voltage = float64(msg.Voltage[0]) * 0.1
+	}
 	std.Current = float64(msg.Current) * 0.01
 	std.Power = float64(msg.Power) * 0.1
 	std.ChargeEnergy = float64(msg.TotalEnergy) * 0.001

@@ -53,6 +53,11 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>数据报表</span>
         </el-menu-item>
+
+        <el-menu-item index="/logs">
+          <el-icon><Tickets /></el-icon>
+          <span>实时日志</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

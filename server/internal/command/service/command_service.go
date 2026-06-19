@@ -20,12 +20,12 @@ import (
 // CommandService 指令服务
 type CommandService struct {
 	db       *gorm.DB
-	producer *kafka.Producer
+	producer kafka.MessagePublisher
 	tcpSrv   *tcpserver.Server
 }
 
 // NewCommandService 创建指令服务
-func NewCommandService(db *gorm.DB, producer *kafka.Producer, tcpSrv *tcpserver.Server) *CommandService {
+func NewCommandService(db *gorm.DB, producer kafka.MessagePublisher, tcpSrv *tcpserver.Server) *CommandService {
 	return &CommandService{
 		db:       db,
 		producer: producer,

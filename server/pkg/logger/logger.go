@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var Log *zap.Logger
+var Log *zap.Logger = zap.NewNop()
 
 // Init 初始化日志
 func Init(level, format, output string) error {
