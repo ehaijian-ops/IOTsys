@@ -13,8 +13,8 @@ import (
 // AP3000 电单车充电桩协议适配器
 // 通信方式: TCP 长连接
 // 帧格式: 帧头(DNY:0x44 0x4E 0x59) + 长度(2B) + 设备ID(4B) + 消息ID(2B) + 命令(1B) + 数据(nB) + 校验(2B)
-// 长度 = 命令 + 数据 + 设备ID(4) + 消息ID(2) 的总字节数，最大256
-// 校验 = 除帧头外的所有字节累加和取低16位
+// 长度 = 设备ID(4) + 消息ID(2) + 命令(1) + 数据(n) + 校验(2) 的总字节数，最大256
+// 校验 = 包头+长度+设备ID+消息ID+命令+数据 所有字节的累加和取低16位
 // 字节序: 默认小端模式
 // 重发: 每包默认发1次，超时15秒重发
 
@@ -120,9 +120,10 @@ func (a *AP3000Adapter) Validate(raw []byte) bool {
 	if raw[0] != FrameHeader0 || raw[1] != FrameHeader1 || raw[2] != FrameHeader2 {
 		return false
 	}
-	// 校验长度: 长度字段 = 命令 + 数据 + 设备ID(4) + 消息ID(2) 的总字节数
+	// 校验长度: 长度字段 = 帧ID(4) + 消息ID(2) + 命令(1) + 数据(n) + 校验(2)，最大256
 	dataLen := int(binary.LittleEndian.Uint16(raw[HeaderLen : HeaderLen+LenLen]))
-	totalExpected := HeaderLen + LenLen + dataLen + ChecksumLen
+	// dataLen 已包含校验字段，不需额外加 ChecksumLen
+	totalExpected := HeaderLen + LenLen + dataLen
 	if totalExpected > len(raw) {
 		return false
 	}
@@ -140,14 +141,15 @@ func (a *AP3000Adapter) calcChecksum(data []byte) uint16 {
 }
 
 // verifyChecksum 验证累加和
+// 协议规范: 校验 = 包头+长度+帧ID+消息ID+命令+数据 所有字节的累加和取低16位
 func (a *AP3000Adapter) verifyChecksum(frame []byte) bool {
 	if len(frame) < HeaderLen+ChecksumLen {
 		return false
 	}
-	// 校验范围: 从长度字段到数据结束
 	payloadEnd := len(frame) - ChecksumLen
 	expected := binary.LittleEndian.Uint16(frame[payloadEnd:])
-	actual := a.calcChecksum(frame[HeaderLen:payloadEnd])
+	// 累加范围包含帧头 DNY (协议要求包头参与校验)
+	actual := a.calcChecksum(frame[:payloadEnd])
 	return expected == actual
 }
 
@@ -166,9 +168,9 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 	// 命令字
 	cmdOffset := HeaderLen + LenLen + DevIDLen + MsgIDLen
 	cmd := raw[cmdOffset]
-	// 数据部分
+	// 数据部分 (长度字段含校验，需减去 ChecksumLen)
 	dataOffset := cmdOffset + CmdLen
-	dataEnd := HeaderLen + LenLen + dataLen
+	dataEnd := HeaderLen + LenLen + dataLen - ChecksumLen
 	payload := raw[dataOffset:dataEnd]
 
 	std := &model.StandardData{
@@ -182,7 +184,15 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 	var err error
 	switch cmd {
 	case CmdLogin: // 0x01 设备登录(旧版)
-		err = a.parseLogin(payload, std)
+		// 登录上报至少需要 设备类型(1) + 固件版本(2) = 3字节
+		if len(payload) >= 3 {
+			err = a.parseLogin(payload, std)
+		} else {
+			std.Extra["cmd"] = "login"
+			if len(payload) >= 1 {
+				std.Extra["response_code"] = int(payload[0])
+			}
+		}
 	case CmdSwipeCard: // 0x02 刷卡
 		err = a.parseSwipeCard(payload, std)
 	case CmdChargeRecord: // 0x03 充电记录
@@ -192,9 +202,30 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 	case CmdChargeProgress: // 0x06 充电中实时数据
 		err = a.parseChargeProgress(payload, std)
 	case CmdRegister: // 0x20 设备注册
-		err = a.parseRegister(payload, std)
+		// 注册上报至少需要 设备类型(1) + 固件版本(2) = 3字节
+		if len(payload) >= 3 {
+			err = a.parseRegister(payload, std)
+		} else {
+			std.Extra["cmd"] = "register"
+			if len(payload) >= 1 {
+				std.Extra["response_code"] = int(payload[0])
+			}
+		}
 	case CmdStatusReport: // 0x21 设备状态上报
-		err = a.parseStatusReport(payload, std)
+		// 协议支持两种格式：
+		//   a) 设备上报(>=4字节): 电压+端口数量+端口状态+信号强度+温度
+		//   b) 简短应答(1字节): 仅响应码，0=成功
+		if len(payload) >= 4 {
+			err = a.parseStatusReport(payload, std)
+		} else {
+			std.Extra["cmd"] = "status_report"
+			if len(payload) >= 1 {
+				std.Extra["response_code"] = int(payload[0])
+			}
+			if len(payload) > 0 {
+				std.Extra["raw_data"] = fmt.Sprintf("%X", payload)
+			}
+		}
 	case CmdGetTime: // 0x22 获取时间
 		std.Extra["cmd"] = "get_time"
 	case CmdChargeRecordV2: // 0x23 充电记录(分时计费)
@@ -788,11 +819,12 @@ func (a *AP3000Adapter) Encode(cmd *model.StandardCommand) ([]byte, error) {
 
 // buildFrame 构建完整的AP3000协议帧
 func (a *AP3000Adapter) buildFrame(devID uint32, msgID uint16, cmd byte, data []byte) []byte {
-	// 数据长度 = 设备ID(4) + 消息ID(2) + 命令(1) + 数据(n)
-	dataLen := DevIDLen + MsgIDLen + CmdLen + len(data)
+	// 数据长度 = 设备ID(4) + 消息ID(2) + 命令(1) + 数据(n) + 校验(2)
+	// 协议规范: 长度字段包含校验位
+	dataLen := DevIDLen + MsgIDLen + CmdLen + len(data) + ChecksumLen
 
-	// 帧结构: 帧头(3) + 长度(2) + 设备ID(4) + 消息ID(2) + 命令(1) + 数据(n) + 校验(2)
-	frame := make([]byte, HeaderLen+LenLen+dataLen+ChecksumLen)
+	// 帧结构: 帧头(3) + 长度(2) + ... + 数据(n) + 校验(2)
+	frame := make([]byte, HeaderLen+LenLen+dataLen)
 
 	// 帧头 DNY
 	frame[0] = FrameHeader0
@@ -814,9 +846,9 @@ func (a *AP3000Adapter) buildFrame(devID uint32, msgID uint16, cmd byte, data []
 	// 数据
 	copy(frame[HeaderLen+LenLen+DevIDLen+MsgIDLen+CmdLen:], data)
 
-	// 校验 (累加和, 从长度字段开始)
-	payloadEnd := HeaderLen + LenLen + dataLen
-	checksum := a.calcChecksum(frame[HeaderLen:payloadEnd])
+	// 校验 (累加和, 从包头开始: "包头+长度+帧ID+消息ID+命令+数据")
+	payloadEnd := len(frame) - ChecksumLen
+	checksum := a.calcChecksum(frame[:payloadEnd])
 	binary.LittleEndian.PutUint16(frame[payloadEnd:], checksum)
 
 	return frame
@@ -969,7 +1001,8 @@ func (a *AP3000Adapter) DecodeResponse(raw []byte) (*model.StandardCommandRespon
 	cmdOffset := HeaderLen + LenLen + DevIDLen + MsgIDLen
 	cmd := raw[cmdOffset]
 	dataOffset := cmdOffset + CmdLen
-	payloadEnd := HeaderLen + LenLen + dataLen
+	// 长度字段含校验，需减去 ChecksumLen
+	payloadEnd := HeaderLen + LenLen + dataLen - ChecksumLen
 
 	resp := &model.StandardCommandResponse{
 		Timestamp: time.Now(),

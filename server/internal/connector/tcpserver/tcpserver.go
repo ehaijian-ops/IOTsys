@@ -2,6 +2,7 @@ package tcpserver
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"sync"
@@ -188,6 +189,8 @@ func (s *Server) processData(session *Session, raw []byte) {
 				zap.String("device_id", session.DeviceID),
 				zap.Error(err),
 			)
+			// 解码失败时仍推送原始数据到 SSE
+			s.broadcastRaw(session, raw, "decode_error")
 			return
 		}
 		s.publishDeviceData(session, stdData)
@@ -199,8 +202,12 @@ func (s *Server) processData(session *Session, raw []byte) {
 	if err != nil {
 		logger.Error("Failed to detect protocol",
 			zap.String("remote_addr", session.RemoteAddr),
+			zap.Int("data_len", len(raw)),
+			zap.String("hex", hex.EncodeToString(raw[:minInt(len(raw), 40)])),
 			zap.Error(err),
 		)
+		// 协议检测失败时推送原始数据到实时日志
+		s.broadcastRaw(session, raw, "unknown_protocol")
 		return
 	}
 
@@ -213,6 +220,8 @@ func (s *Server) processData(session *Session, raw []byte) {
 	stdData, err := adapter.Decode(raw)
 	if err != nil {
 		logger.Error("Failed to decode data", zap.Error(err))
+		// 解码失败也推送原始数据
+		s.broadcastRaw(session, raw, "decode_error")
 		return
 	}
 
@@ -223,6 +232,30 @@ func (s *Server) processData(session *Session, raw []byte) {
 	s.updateDeviceOnline(stdData.DeviceID, session)
 
 	s.publishDeviceData(session, stdData)
+}
+
+// broadcastRaw 将未识别的原始数据广播到 SSE 实时日志
+func (s *Server) broadcastRaw(session *Session, raw []byte, reason string) {
+	if s.sseHub == nil {
+		return
+	}
+	entry := &sse.LogEntry{
+		DeviceID:   session.DeviceID,
+		Protocol:   session.Protocol,
+		Timestamp:  time.Now().Format("2006-01-02 15:04:05.000"),
+		RemoteAddr: session.RemoteAddr,
+		RawHex:     hex.EncodeToString(raw),
+		Type:       "raw",
+		Status:     reason,
+	}
+	s.sseHub.Broadcast(entry)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // publishDeviceData 发布设备数据
