@@ -58,6 +58,11 @@
           <el-icon><Tickets /></el-icon>
           <span>实时日志</span>
         </el-menu-item>
+
+        <el-menu-item index="/system">
+          <el-icon><Setting /></el-icon>
+          <span>系统监控</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

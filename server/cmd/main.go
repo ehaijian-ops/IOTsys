@@ -16,6 +16,7 @@ import (
 	deviceRepo "iot-platform/internal/device/repository"
 	deviceService "iot-platform/internal/device/service"
 	"iot-platform/internal/sse"
+	sysHandler "iot-platform/internal/system"
 	"iot-platform/migrations"
 	"iot-platform/pkg/auth"
 	"iot-platform/pkg/config"
@@ -111,7 +112,10 @@ func main() {
 	cmdSvc := cmdService.NewCommandService(mysql.DB, producer, tcpSrv)
 	cmdH := cmdHandler.NewCommandHandler(cmdSvc)
 
-	// 9. 初始化认证
+	// 9. 初始化系统状态处理器
+	sysH := sysHandler.NewHandler(cfg, tcpSrv, sseHub, producer)
+
+	// 10. 初始化认证
 	jwtManager := auth.NewJWTManager(cfg.JWT)
 
 	// 10. 创建 HTTP 路由
@@ -141,6 +145,9 @@ func main() {
 			// TODO: 实现登录逻辑
 			c.JSON(http.StatusOK, gin.H{"message": "login endpoint"})
 		})
+
+		// 系统状态监控
+		v1.GET("/system/status", sysH.GetStatus)
 
 		// 实时日志 SSE 流（公开，前端 EventSource 不支持自定义 Header）
 		v1.GET("/devices/logs/stream", sseHub.HandleSSE)

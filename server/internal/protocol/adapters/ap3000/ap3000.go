@@ -779,6 +779,13 @@ func (a *AP3000Adapter) Encode(cmd *model.StandardCommand) ([]byte, error) {
 	case "query_status":
 		cmdByte = CmdQueryStatus
 		payload = []byte{}
+	case "get_time":
+		cmdByte = CmdGetTime
+		// 时间数据 (4字节, Unix时间戳, 小端)
+		now := time.Now()
+		timeData := make([]byte, 4)
+		binary.LittleEndian.PutUint32(timeData, uint32(now.Unix()))
+		payload = timeData
 	case "start_charge":
 		cmdByte = CmdStartStopCharge
 		payload, err = a.encodeStartCharge(cmd)
@@ -852,6 +859,26 @@ func (a *AP3000Adapter) buildFrame(devID uint32, msgID uint16, cmd byte, data []
 	binary.LittleEndian.PutUint16(frame[payloadEnd:], checksum)
 
 	return frame
+}
+
+// AutoReply 构建自动回复帧（用于设备查询类指令如获取时间）
+// 返回 nil 表示无需自动回复
+func (a *AP3000Adapter) AutoReply(raw []byte, std *model.StandardData) []byte {
+	cmdStr, _ := std.Extra["cmd"].(string)
+	switch cmdStr {
+	case "get_time":
+		// 从原始请求帧中提取 devID 和 msgID，原样回复
+		devID := binary.LittleEndian.Uint32(raw[HeaderLen+LenLen : HeaderLen+LenLen+DevIDLen])
+		msgID := binary.LittleEndian.Uint16(raw[HeaderLen+LenLen+DevIDLen : HeaderLen+LenLen+DevIDLen+MsgIDLen])
+
+		// 时间数据 (4字节, Unix时间戳, 小端)
+		now := time.Now()
+		timeData := make([]byte, 4)
+		binary.LittleEndian.PutUint32(timeData, uint32(now.Unix()))
+
+		return a.buildFrame(devID, msgID, CmdGetTime, timeData)
+	}
+	return nil
 }
 
 // encodeStartCharge 编码启动充电指令

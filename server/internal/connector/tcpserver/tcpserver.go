@@ -178,6 +178,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.onDisconnect(session)
 }
 
+// AutoReplyer 协议适配器可选接口：自动回复设备查询类指令
+type AutoReplyer interface {
+	AutoReply(raw []byte, std *model.StandardData) []byte
+}
+
 // processData 处理设备上报数据
 func (s *Server) processData(session *Session, raw []byte) {
 	// 如果已识别协议，直接用已知协议解析
@@ -194,6 +199,10 @@ func (s *Server) processData(session *Session, raw []byte) {
 			return
 		}
 		s.publishDeviceData(session, stdData)
+
+		// 尝试自动回复
+		adapter, _ := engine.GetAdapter(session.Protocol)
+		s.tryAutoReply(session, adapter, raw, stdData)
 		return
 	}
 
@@ -232,6 +241,40 @@ func (s *Server) processData(session *Session, raw []byte) {
 	s.updateDeviceOnline(stdData.DeviceID, session)
 
 	s.publishDeviceData(session, stdData)
+
+	// 尝试自动回复
+	s.tryAutoReply(session, adapter, raw, stdData)
+}
+
+// tryAutoReply 如果协议适配器支持自动回复，则构建并发送回复
+func (s *Server) tryAutoReply(session *Session, adapter engine.ProtocolAdapter, raw []byte, stdData *model.StandardData) {
+	if adapter == nil {
+		return
+	}
+	ar, ok := adapter.(AutoReplyer)
+	if !ok {
+		return
+	}
+	reply := ar.AutoReply(raw, stdData)
+	if len(reply) == 0 {
+		return
+	}
+
+	session.Conn.SetWriteDeadline(time.Now().Add(s.cfg.WriteTimeout))
+	if _, err := session.Conn.Write(reply); err != nil {
+		logger.Error("Failed to send auto-reply",
+			zap.String("device_id", stdData.DeviceID),
+			zap.String("cmd", fmt.Sprintf("%v", stdData.Extra["cmd"])),
+			zap.Error(err),
+		)
+		return
+	}
+
+	logger.Info("Auto-reply sent",
+		zap.String("device_id", stdData.DeviceID),
+		zap.String("cmd", fmt.Sprintf("%v", stdData.Extra["cmd"])),
+		zap.Int("len", len(reply)),
+	)
 }
 
 // broadcastRaw 将未识别的原始数据广播到 SSE 实时日志
