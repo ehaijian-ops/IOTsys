@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Deploy web admin frontend to server"""
+"""Deploy web admin frontend to server (optimized tar.gz upload)."""
 import paramiko
 import sys
+import os
 import time
+import tarfile
+import io
 
 HOST = "123.56.161.254"
 USER = "root"
 PASSWORD = "hndx@N2000"
 REMOTE_DIR = "/root/iot-deploy/web-admin"
+
+EXCLUDE_PATTERNS = {"node_modules", ".git", "__pycache__"}
 
 def safe(s):
     """Encode string safely for Windows console"""
@@ -30,28 +35,31 @@ def main():
     out, err = run_ssh(ssh, "rm -rf {0} && mkdir -p {0}".format(REMOTE_DIR))
     print(safe(out or "OK"))
 
-    print("\n=== Step 2: Upload web-admin files ===")
+    print("\n=== Step 2: Upload web-admin files (tar.gz) ===")
+    web_dir = "e:/IOTsys/web/admin".replace("\\", "/")
+
+    # Create tar.gz in memory
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+        for root, dirs, files in os.walk(web_dir):
+            dirs[:] = [d for d in dirs if d not in EXCLUDE_PATTERNS]
+            for f in files:
+                local_path = os.path.join(root, f).replace("\\", "/")
+                rel = os.path.relpath(local_path, web_dir).replace("\\", "/")
+                skip = any(pat in rel.split("/") for pat in EXCLUDE_PATTERNS)
+                if skip:
+                    continue
+                tar.add(local_path, arcname=rel)
+    buf.seek(0)
+
     sftp = ssh.open_sftp()
-    import os
-    web_dir = "e:/IOTsys/web/admin"
-    for root, dirs, files in os.walk(web_dir.replace("\\", "/")):
-        for f in files:
-            local_path = os.path.join(root, f).replace("\\", "/")
-            rel = os.path.relpath(local_path, web_dir.replace("\\", "/")).replace("\\", "/")
-            remote_path = "{}/{}".format(REMOTE_DIR, rel)
-            remote_subdir = os.path.dirname(remote_path)
-            try:
-                sftp.stat(remote_subdir)
-            except:
-                parts = remote_subdir.strip("/").split("/")
-                for i in range(1, len(parts) + 1):
-                    try:
-                        sftp.mkdir("/" + "/".join(parts[:i]))
-                    except:
-                        pass
-            sftp.put(local_path, remote_path)
-            print("  Uploaded: {}".format(safe(rel)))
+    sftp.putfo(buf, REMOTE_DIR + "/admin.tar.gz")
+    size_mb = buf.tell() / (1024 * 1024)
+    print("  Uploaded archive: {:.1f} MB".format(size_mb))
     sftp.close()
+
+    out, err = run_ssh(ssh, "cd {} && tar xzf admin.tar.gz && rm admin.tar.gz && echo OK".format(REMOTE_DIR))
+    print("  Extract:", safe(out))
 
     print("\n=== Step 3: Build Docker image ===")
     out, err = run_ssh(ssh, "cd {} && docker build -t iot-admin:latest . 2>&1".format(REMOTE_DIR), timeout=300)

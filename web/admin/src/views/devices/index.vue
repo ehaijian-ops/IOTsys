@@ -19,6 +19,7 @@
         <el-form-item label="协议">
           <el-select v-model="query.protocol" placeholder="全部" clearable style="width: 150px">
             <el-option label="AP3000_v2" value="AP3000_v2" />
+            <el-option label="WSD_v1" value="WSD_v1" />
             <el-option label="TF100_v1" value="TF100_v1" />
           </el-select>
         </el-form-item>
@@ -98,8 +99,9 @@
         </el-form-item>
         <el-form-item label="协议" required>
           <el-select v-model="form.protocol" style="width: 100%">
-            <el-option label="AP3000_v2 (电单车)" value="AP3000_v2" />
-            <el-option label="TF100_v1 (汽车)" value="TF100_v1" />
+            <el-option label="AP3000_v2 (电单车-安平)" value="AP3000_v2" />
+            <el-option label="WSD_v1 (电单车-微小电)" value="WSD_v1" />
+            <el-option label="TF100_v1 (汽车-特来电)" value="TF100_v1" />
           </el-select>
         </el-form-item>
         <el-form-item label="厂商">
@@ -176,6 +178,8 @@ const mockDevices: Device[] = [
   { id: '3', sn: 'TF100-001', device_type: 'ev_charger', protocol: 'TF100_v1', vendor: '特来电', model: 'TF100', site_id: '', install_location: 'B1停车位', firmware_version: 'v1.5.0', status: 'online', last_online_at: '2026-06-19 00:45:00', created_at: '', updated_at: '' },
   { id: '4', sn: 'TF100-002', device_type: 'ev_charger', protocol: 'TF100_v1', vendor: '特来电', model: 'TF100', site_id: '', install_location: 'B2停车位', firmware_version: 'v1.5.0', status: 'offline', last_online_at: '2026-06-18 23:30:00', created_at: '', updated_at: '' },
   { id: '5', sn: 'AP3000-005', device_type: 'ebike_charger', protocol: 'AP3000_v2', vendor: '安平科技', model: 'AP3000', site_id: '', install_location: 'C区1号棚', firmware_version: 'v2.1.0', status: 'fault', last_online_at: '2026-06-19 00:40:00', created_at: '', updated_at: '' },
+  { id: '6', sn: 'WSD-001', device_type: 'ebike_charger', protocol: 'WSD_v1', vendor: '微小电', model: 'WSD-12', site_id: '', install_location: 'D区1号棚', firmware_version: 'V1.0', status: 'online', last_online_at: '2026-06-19 00:45:00', created_at: '', updated_at: '' },
+  { id: '7', sn: 'WSD-002', device_type: 'ebike_charger', protocol: 'WSD_v1', vendor: '微小电', model: 'WSD-12', site_id: '', install_location: 'D区2号棚', firmware_version: 'V1.0', status: 'charging', last_online_at: '2026-06-19 00:44:00', created_at: '', updated_at: '' },
 ]
 
 const showCreateDialog = ref(false)

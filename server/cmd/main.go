@@ -30,6 +30,7 @@ import (
 	// 导入协议适配器（触发 init 注册）
 	_ "iot-platform/internal/protocol/adapters/ap3000"
 	_ "iot-platform/internal/protocol/adapters/tf100"
+	_ "iot-platform/internal/protocol/adapters/wsd"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"

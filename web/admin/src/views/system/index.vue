@@ -131,6 +131,11 @@
               <span class="adapter-type">二进制帧 (DNY)</span>
             </div>
             <div class="adapter-item">
+              <el-tag type="success" size="small">WSD</el-tag>
+              <span class="adapter-name">电单车充电桩(微小电) v1.0</span>
+              <span class="adapter-type">二进制帧 (0xEE)</span>
+            </div>
+            <div class="adapter-item">
               <el-tag type="success" size="small">TF100</el-tag>
               <span class="adapter-name">汽车充电桩 v1.0</span>
               <span class="adapter-type">JSON 帧 (CCMD/SCMD)</span>

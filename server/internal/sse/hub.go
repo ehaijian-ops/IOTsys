@@ -40,7 +40,8 @@ type LogEntry struct {
 	FaultCode   string  `json:"fault_code,omitempty"`
 	RemoteAddr  string  `json:"remote_addr,omitempty"`
 	RawHex      string  `json:"raw_hex,omitempty"`
-	Type        string  `json:"type"` // "data" / "connect" / "disconnect"
+	Type        string  `json:"type"`      // "data" / "raw" / "reply" / "connect" / "disconnect"
+	Direction   string  `json:"direction"` // "rx"=设备→服务器(接收), "tx"=服务器→设备(发送)
 }
 
 // Hub SSE 消息分发中心
@@ -181,6 +182,7 @@ func FromStandardData(data *model.StandardData, remoteAddr string) *LogEntry {
 		FaultCode:   data.FaultCode,
 		RemoteAddr:  remoteAddr,
 		Type:        "data",
+		Direction:   "rx",
 	}
 }
 

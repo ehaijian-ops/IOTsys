@@ -50,11 +50,20 @@ import { ref } from 'vue'
 const protocols = ref([
   {
     name: 'AP3000_v2',
-    version: '2.0',
+    version: '8.6',
     device_type: 'ebike_charger',
-    description: '安平科技电单车充电桩通信协议，支持TCP长连接，二进制帧格式',
+    description: '安平科技电单车充电桩通信协议，支持TCP长连接，二进制帧格式(DNY)',
     comm_type: 'TCP',
     online_count: 85,
+    status: '已注册',
+  },
+  {
+    name: 'WSD_v1',
+    version: '1.0',
+    device_type: 'ebike_charger',
+    description: '微小电12路电单车充电桩通信协议，支持TCP长连接，二进制帧格式(0xEE)，含34个主指令',
+    comm_type: 'TCP',
+    online_count: 12,
     status: '已注册',
   },
   {

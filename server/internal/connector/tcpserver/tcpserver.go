@@ -37,14 +37,15 @@ type Server struct {
 // Session 设备会话
 type Session struct {
 	ID          string
-	DeviceID    string
-	Protocol    string
-	Conn        net.Conn
-	ConnectedAt time.Time
-	LastActive  time.Time
-	RemoteAddr  string
-	ctx         context.Context
-	cancel      context.CancelFunc
+	DeviceID         string
+	Protocol         string
+	Conn             net.Conn
+	ConnectedAt      time.Time
+	LastActive       time.Time
+	RemoteAddr       string
+	WsdSessionID     []byte // WSD协议登录时分配的SESSION_ID，心跳ACK回显使用
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 // NewServer 创建 TCP 服务器
@@ -123,6 +124,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.connCount.Add(-1)
 		s.wg.Done()
 	}()
+
+	// 禁用 Nagle 算法，确保小包（如 10 字节心跳 ACK）立即发送而不被延迟合并
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
+	}
 
 	sessionID := uuid.New().String()
 	session := &Session{
@@ -255,26 +261,96 @@ func (s *Server) tryAutoReply(session *Session, adapter engine.ProtocolAdapter, 
 	if !ok {
 		return
 	}
-	reply := ar.AutoReply(raw, stdData)
-	if len(reply) == 0 {
-		return
+
+	cmdStr, _ := stdData.Extra["cmd"].(string)
+	// 提取原始帧的 SESSION_ID 用于诊断
+	var sidHex string
+	if len(raw) >= 9 {
+		sidHex = hex.EncodeToString(raw[3:9])
 	}
 
-	session.Conn.SetWriteDeadline(time.Now().Add(s.cfg.WriteTimeout))
-	if _, err := session.Conn.Write(reply); err != nil {
-		logger.Error("Failed to send auto-reply",
+	// 传递登录时分配的 WSD SESSION_ID 给 AutoReply（心跳ACK需要回显此ID）
+	if session.WsdSessionID != nil && len(session.WsdSessionID) == 6 {
+		stdData.Extra["wsd_session_id"] = session.WsdSessionID
+	}
+
+	logger.Info("AutoReply triggered",
+		zap.String("device_id", stdData.DeviceID),
+		zap.String("protocol", adapter.Name()),
+		zap.String("cmd", cmdStr),
+		zap.Int("raw_len", len(raw)),
+		zap.String("raw_hex", hex.EncodeToString(raw)),
+		zap.String("raw_sid", sidHex),
+		zap.String("remote_addr", session.RemoteAddr),
+		zap.String("local_addr", session.Conn.LocalAddr().String()),
+	)
+
+	reply := ar.AutoReply(raw, stdData)
+	if len(reply) == 0 {
+		logger.Info("AutoReply returned empty",
 			zap.String("device_id", stdData.DeviceID),
-			zap.String("cmd", fmt.Sprintf("%v", stdData.Extra["cmd"])),
-			zap.Error(err),
+			zap.String("cmd", cmdStr),
 		)
 		return
 	}
 
+	logger.Info("AutoReply built response",
+		zap.String("device_id", stdData.DeviceID),
+		zap.String("cmd", cmdStr),
+		zap.Int("reply_len", len(reply)),
+		zap.String("reply_hex", hex.EncodeToString(reply)),
+	)
+
+	// 确保回复写入前连接状态日志
+	session.Conn.SetWriteDeadline(time.Now().Add(s.cfg.WriteTimeout))
+	n, writeErr := session.Conn.Write(reply)
+	if writeErr != nil {
+		logger.Error("Failed to send auto-reply",
+			zap.String("device_id", stdData.DeviceID),
+			zap.String("cmd", cmdStr),
+			zap.String("remote_addr", session.RemoteAddr),
+			zap.Error(writeErr),
+		)
+		return
+	}
+
+	// 登录应答后，提取分配给设备的 SESSION_ID 并存储，供后续心跳ACK回显使用
+	if cmdStr == "login" && len(reply) >= 9 {
+		sid := make([]byte, 6)
+		copy(sid, reply[3:9])
+		session.WsdSessionID = sid
+		logger.Info("WSD session ID stored",
+			zap.String("device_id", stdData.DeviceID),
+			zap.String("session_id_hex", hex.EncodeToString(sid)),
+		)
+	}
+
 	logger.Info("Auto-reply sent",
 		zap.String("device_id", stdData.DeviceID),
-		zap.String("cmd", fmt.Sprintf("%v", stdData.Extra["cmd"])),
+		zap.String("cmd", cmdStr),
 		zap.Int("len", len(reply)),
+		zap.Int("written", n),
+		zap.String("remote_addr", session.RemoteAddr),
 	)
+
+	// 将服务器回复广播到 SSE 实时日志供前端展示
+	if s.sseHub != nil {
+		deviceID := stdData.DeviceID
+		if deviceID == "" {
+			deviceID = session.DeviceID // 心跳等指令解析出的 DeviceID 可能为空，用 session 的
+		}
+		replyEntry := &sse.LogEntry{
+			DeviceID:   deviceID,
+			Protocol:   adapter.Name(),
+			Timestamp:  time.Now().Format("2006-01-02 15:04:05.000"),
+			RemoteAddr: session.RemoteAddr,
+			RawHex:     hex.EncodeToString(reply),
+			Type:       "reply",
+			Direction:  "tx",
+			Status:     cmdStr, // 标注回复类型: login / heartbeat / get_time
+		}
+		s.sseHub.Broadcast(replyEntry)
+	}
 }
 
 // broadcastRaw 将未识别的原始数据广播到 SSE 实时日志
@@ -290,6 +366,7 @@ func (s *Server) broadcastRaw(session *Session, raw []byte, reason string) {
 		RawHex:     hex.EncodeToString(raw),
 		Type:       "raw",
 		Status:     reason,
+		Direction:  "rx",
 	}
 	s.sseHub.Broadcast(entry)
 }

@@ -22,7 +22,7 @@
       </el-form>
 
       <div class="login-footer">
-        <span>支持 AP3000 · TF100 · 多协议扩展</span>
+        <span>支持 AP3000 · WSD · TF100 · 多协议扩展</span>
       </div>
     </div>
   </div>
