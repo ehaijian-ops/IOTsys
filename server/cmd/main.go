@@ -15,8 +15,12 @@ import (
 	deviceHandler "iot-platform/internal/device/handler"
 	deviceRepo "iot-platform/internal/device/repository"
 	deviceService "iot-platform/internal/device/service"
+	siteHandler "iot-platform/internal/site/handler"
 	"iot-platform/internal/sse"
 	sysHandler "iot-platform/internal/system"
+	userHandler "iot-platform/internal/user/handler"
+	userRepo "iot-platform/internal/user/repository"
+	userService "iot-platform/internal/user/service"
 	"iot-platform/migrations"
 	"iot-platform/pkg/auth"
 	"iot-platform/pkg/config"
@@ -109,6 +113,22 @@ func main() {
 	devSvc := deviceService.NewDeviceService(devRepo)
 	devH := deviceHandler.NewDeviceHandler(devSvc)
 
+	// 设备UUID查找回调：协议层 DeviceID (SN) → 数据库 UUID
+	// 用于 tcpserver 设置在线状态时同时写入 UUID key
+	tcpSrv.SetDeviceUUIDLookup(func(protocolDeviceID string) string {
+		dev, err := devRepo.GetBySN(context.Background(), protocolDeviceID)
+		if err != nil {
+			return ""
+		}
+		return dev.ID
+	})
+
+	// 未注册设备管理
+	unregisteredH := deviceHandler.NewUnregisteredDeviceHandler(tcpSrv, devSvc, mysql.DB)
+
+	// 站点管理
+	siteH := siteHandler.NewSiteHandler(mysql.DB, devRepo)
+
 	// 指令管理
 	cmdSvc := cmdService.NewCommandService(mysql.DB, producer, tcpSrv)
 	cmdH := cmdHandler.NewCommandHandler(cmdSvc)
@@ -119,7 +139,19 @@ func main() {
 	// 10. 初始化认证
 	jwtManager := auth.NewJWTManager(cfg.JWT)
 
-	// 10. 创建 HTTP 路由
+	// 11. 初始化用户服务
+	uRepo := userRepo.NewUserRepository(mysql.DB)
+	uSvc := userService.NewUserService(uRepo, jwtManager)
+	uH := userHandler.NewUserHandler(uSvc)
+
+	// 初始化默认管理员账号
+	if err := uSvc.SeedDefaultAdmin(); err != nil {
+		logger.Error("Failed to seed default admin", zap.Error(err))
+	} else {
+		logger.Info("Default admin user ready (username: admin)")
+	}
+
+	// 12. 创建 HTTP 路由
 	router := gin.New()
 
 	// 中间件
@@ -142,10 +174,7 @@ func main() {
 	v1 := router.Group("/api/v1")
 	{
 		// 公开接口
-		v1.POST("/auth/login", func(c *gin.Context) {
-			// TODO: 实现登录逻辑
-			c.JSON(http.StatusOK, gin.H{"message": "login endpoint"})
-		})
+		v1.POST("/auth/login", uH.Login)
 
 		// 系统状态监控
 		v1.GET("/system/status", sysH.GetStatus)
@@ -157,26 +186,60 @@ func main() {
 		authGroup := v1.Group("")
 		authGroup.Use(auth.AuthMiddleware(jwtManager))
 		{
+			// 用户自己的操作
+			authGroup.GET("/auth/userinfo", uH.GetUserInfo)
+			authGroup.PUT("/auth/password", uH.ChangePassword)
+
 			// 设备管理
 			devices := authGroup.Group("/devices")
 			{
 				devices.GET("", devH.ListDevices)
-				devices.POST("", auth.RequireRoles("admin"), devH.CreateDevice)
+				devices.POST("", auth.RequireRoles("admin", "super_admin"), devH.CreateDevice)
 				devices.GET("/:id", devH.GetDevice)
-				devices.PUT("/:id", auth.RequireRoles("admin"), devH.UpdateDevice)
-				devices.DELETE("/:id", auth.RequireRoles("admin"), devH.DeleteDevice)
+				devices.PUT("/:id", auth.RequireRoles("admin", "super_admin"), devH.UpdateDevice)
+				devices.DELETE("/:id", auth.RequireRoles("admin", "super_admin"), devH.DeleteDevice)
+
+				// 未注册设备
+				devices.GET("/unregistered", unregisteredH.ListUnregisteredDevices)
+				devices.POST("/unregistered/add", auth.RequireRoles("admin", "super_admin"), unregisteredH.AddToSite)
 
 				// 设备指令
 				devices.POST("/:id/commands", cmdH.CreateCommand)
 				devices.GET("/:id/commands", cmdH.ListCommands)
 			}
 
+			// 站点列表（简要，供下拉选择）
+			authGroup.GET("/sites", unregisteredH.ListSites)
+
+			// 站点管理（CRUD）
+			sites := authGroup.Group("/sites/manage")
+			{
+				sites.GET("", siteH.ListSites)
+				sites.GET("/:id", siteH.GetSite)
+				sites.POST("", auth.RequireRoles("admin", "super_admin"), siteH.CreateSite)
+				sites.PUT("/:id", auth.RequireRoles("admin", "super_admin"), siteH.UpdateSite)
+				sites.DELETE("/:id", auth.RequireRoles("admin", "super_admin"), siteH.DeleteSite)
+			}
+
 			// 指令详情
 			authGroup.GET("/commands/:id", cmdH.GetCommand)
+
+			// ========== 用户管理（需要 admin 或 super_admin 权限） ==========
+			users := authGroup.Group("/users")
+			users.Use(auth.RequireRoles("admin", "super_admin"))
+			{
+				users.GET("", uH.ListUsers)
+				users.GET("/roles", uH.GetRoles)
+				users.POST("", uH.CreateUser)
+				users.GET("/:id", uH.GetUser)
+				users.PUT("/:id", uH.UpdateUser)
+				users.DELETE("/:id", uH.DeleteUser)
+				users.PUT("/:id/reset-password", uH.ResetPassword)
+			}
 		}
 	}
 
-	// 11. 启动 HTTP 服务器
+	// 13. 启动 HTTP 服务器
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler:      router,

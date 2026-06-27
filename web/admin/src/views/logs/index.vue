@@ -103,8 +103,15 @@
                 {{ directionLabel(log) }}
               </span>
               <span class="log-time">{{ log.timestamp }}</span>
-              <span class="log-type" :class="logTypeClass(log)">[{{ typeLabel(log.type) }}]</span>
+              <span class="log-type" :class="logTypeClass(log)">[{{ displayTypeLabel(log) }}]</span>
               <span class="log-values">
+                <!-- 原文报文：始终显示，点击复制完整HEX -->
+                <span
+                  v-if="log.raw_hex"
+                  class="val-raw-hex hex-copy-btn"
+                  :title="'点击复制完整报文: ' + log.raw_hex"
+                  @click="copyHex(log.raw_hex)"
+                >{{ truncateHex(log.raw_hex) }}</span>
                 <template v-if="log.type === 'data'">
                   <span class="val-voltage">V:{{ log.voltage?.toFixed(1) }}V</span>
                   <span class="val-current">A:{{ log.current?.toFixed(1) }}A</span>
@@ -113,10 +120,12 @@
                   <span :class="['val-status', statusBadgeClass(log.charging_status)]">{{ statusLabel(log.charging_status) }}</span>
                 </template>
                 <template v-else-if="log.type === 'raw' || log.type === 'reply'">
-                  <span class="val-raw-hex">{{ log.raw_hex }}</span>
                   <span :class="['val-status', log.type === 'reply' ? 'st-reply' : 'st-raw']">
                     {{ log.type === 'reply' ? cmdLabel(log.status) : (log.charging_status || log.status) }}
                   </span>
+                </template>
+                <template v-else-if="log.type === 'sim_card'">
+                  <span class="val-sim">{{ log.status }}</span>
                 </template>
                 <template v-if="log.fault_code">
                   <span class="val-fault">故障:{{ log.fault_code }}</span>
@@ -143,6 +152,7 @@ interface LogEntry {
   protocol: string
   timestamp: string
   msg_id: number
+  msg_type: string
   voltage: number
   current: number
   power: number
@@ -198,7 +208,7 @@ const groupedLogs = computed<GroupNode[]>(() => {
       group = {
         key,
         deviceId: log.device_id || '',
-        protocol: log.protocol || '',
+        protocol: (log.protocol && log.protocol !== 'SIM_CARD') ? log.protocol : '',
         remoteAddr: log.remote_addr || '',
         entries: [],
         rxCount: 0,
@@ -208,7 +218,9 @@ const groupedLogs = computed<GroupNode[]>(() => {
     }
     // 合并设备信息（取最新的非空值）
     if (log.device_id && !group.deviceId) group.deviceId = log.device_id
-    if (log.protocol && !group.protocol) group.protocol = log.protocol
+    // 优先显示真实协议名（SIM_CARD/WSD/Unknown 等占位协议可被真实协议覆盖）
+    if (log.protocol && log.protocol !== 'SIM_CARD' && (!group.protocol || group.protocol === 'SIM_CARD')) group.protocol = log.protocol
+    else if (log.protocol && !group.protocol) group.protocol = log.protocol
 
     group.entries.push(log)
     if (log.direction === 'tx') group.txCount++
@@ -384,6 +396,7 @@ function logTypeClass(log: LogEntry) {
   if (log.type === 'data') return 'type-data'
   if (log.type === 'reply') return 'type-reply'
   if (log.type === 'raw') return 'type-raw'
+  if (log.type === 'sim_card') return 'type-sim'
   return 'type-event'
 }
 
@@ -396,6 +409,84 @@ function typeLabel(type: string) {
     disconnect: '断开',
   }
   return map[type] || type || '数据'
+}
+
+// 显示类型标签：优先使用协议层报文类型
+function displayTypeLabel(log: LogEntry) {
+  if (log.msg_type) return msgTypeLabel(log.msg_type)
+  return typeLabel(log.type)
+}
+
+// 协议层报文类型 → 中文标签
+function msgTypeLabel(msgType: string) {
+  const map: Record<string, string> = {
+    login: '登录',
+    register: '注册',
+    heartbeat: '心跳上报',
+    time_request: '校时请求',
+    get_time: '校时请求',
+    all_ports_reply: '全端口状态',
+    one_port_reply: '单端口状态',
+    local_charge: '本地充电',
+    swipe_card: '刷卡',
+    remote_start_ack: '远程启动ACK',
+    remote_stop_ack: '远程停止ACK',
+    settlement: '结算上报',
+    fault_report: '故障上报',
+    gear_report: '分档上报',
+    param_set_ack: '参数应答',
+    config_upload: '配置上传',
+    platform_param: '平台参数',
+    query_card: '查询卡',
+    remote_ctrl_ack: '远程控制ACK',
+    hb_interval_ack: '心跳间隔ACK',
+    charge_record: '充电记录',
+    port_confirm: '端口确认',
+    charge_progress: '充电中',
+    charge_record_v2: '充电记录V2',
+    charge_progress_v2: '充电中V2',
+    lock_notify: '充满通知',
+    port_alarm: '端口报警',
+    device_alarm: '设备报警',
+    comm_info: '通信信息',
+    meter_energy: '电表读数',
+    push_info: '推送信息',
+    lock_heartbeat: '锁心跳',
+    lock_occupied: '锁占用',
+    lock_status: '锁状态',
+    lock_addr_query: '锁地址查询',
+    gun_timeline: '枪时间线',
+    status_report: '状态上报',
+    sim_card: 'SIM卡号',
+  }
+  return map[msgType] || msgType
+}
+
+// 截断十六进制显示（前8字节 + ...）
+function truncateHex(hex: string) {
+  if (!hex) return ''
+  if (hex.length <= 16) return hex
+  return hex.slice(0, 16) + '...'
+}
+
+// 点击复制完整报文
+async function copyHex(hex: string) {
+  if (!hex) return
+  try {
+    await navigator.clipboard.writeText(hex)
+    ElMessage({ message: '报文已复制到剪贴板', type: 'success', duration: 1500, showClose: false })
+  } catch {
+    // 降级方案
+    const ta = document.createElement('textarea')
+    ta.value = hex
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    ElMessage({ message: '报文已复制', type: 'success', duration: 1500, showClose: false })
+  }
 }
 
 function cmdLabel(cmd: string) {
@@ -558,6 +649,7 @@ onUnmounted(() => {
 .log-type.type-data { color: #89b4fa; }
 .log-type.type-reply { color: #a6e3a1; }
 .log-type.type-raw { color: #f9e2af; }
+.log-type.type-sim { color: #cba6f7; }
 .log-type.type-event { color: #a6e3a1; }
 
 .log-values { display: flex; gap: 10px; flex-shrink: 0; }
@@ -584,7 +676,23 @@ onUnmounted(() => {
   font-size: 12px;
   word-break: break-all;
 }
+.hex-copy-btn {
+  color: #7f849c;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: all 0.15s;
+  border: 1px dashed transparent;
+}
+.hex-copy-btn:hover { color: #cba6f7; background: rgba(203, 166, 247, 0.1); border-color: rgba(203, 166, 247, 0.3); }
 .val-fault { color: #f38ba8; font-weight: 600; }
+.val-sim {
+  color: #cba6f7;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  letter-spacing: 2px;
+}
 
 .log-temp { color: #fab387; flex-shrink: 0; margin-left: auto; }
 

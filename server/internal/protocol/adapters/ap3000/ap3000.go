@@ -184,41 +184,36 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 	var err error
 	switch cmd {
 	case CmdLogin: // 0x01 设备登录(旧版)
-		// 登录上报至少需要 设备类型(1) + 固件版本(2) = 3字节
+		std.Extra["cmd"] = "login"
 		if len(payload) >= 3 {
 			err = a.parseLogin(payload, std)
-		} else {
-			std.Extra["cmd"] = "login"
-			if len(payload) >= 1 {
-				std.Extra["response_code"] = int(payload[0])
-			}
+		} else if len(payload) >= 1 {
+			std.Extra["response_code"] = int(payload[0])
 		}
 	case CmdSwipeCard: // 0x02 刷卡
+		std.Extra["cmd"] = "swipe_card"
 		err = a.parseSwipeCard(payload, std)
 	case CmdChargeRecord: // 0x03 充电记录
+		std.Extra["cmd"] = "charge_record"
 		err = a.parseChargeRecord(payload, std)
 	case CmdPortConfirm: // 0x04 端口充电确认
+		std.Extra["cmd"] = "port_confirm"
 		err = a.parsePortConfirm(payload, std)
 	case CmdChargeProgress: // 0x06 充电中实时数据
+		std.Extra["cmd"] = "charge_progress"
 		err = a.parseChargeProgress(payload, std)
 	case CmdRegister: // 0x20 设备注册
-		// 注册上报至少需要 设备类型(1) + 固件版本(2) = 3字节
+		std.Extra["cmd"] = "register"
 		if len(payload) >= 3 {
 			err = a.parseRegister(payload, std)
-		} else {
-			std.Extra["cmd"] = "register"
-			if len(payload) >= 1 {
-				std.Extra["response_code"] = int(payload[0])
-			}
+		} else if len(payload) >= 1 {
+			std.Extra["response_code"] = int(payload[0])
 		}
 	case CmdStatusReport: // 0x21 设备状态上报
-		// 协议支持两种格式：
-		//   a) 设备上报(>=4字节): 电压+端口数量+端口状态+信号强度+温度
-		//   b) 简短应答(1字节): 仅响应码，0=成功
+		std.Extra["cmd"] = "status_report"
 		if len(payload) >= 4 {
 			err = a.parseStatusReport(payload, std)
 		} else {
-			std.Extra["cmd"] = "status_report"
 			if len(payload) >= 1 {
 				std.Extra["response_code"] = int(payload[0])
 			}
@@ -229,12 +224,16 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 	case CmdGetTime: // 0x22 获取时间
 		std.Extra["cmd"] = "get_time"
 	case CmdChargeRecordV2: // 0x23 充电记录(分时计费)
+		std.Extra["cmd"] = "charge_record_v2"
 		err = a.parseChargeRecordV2(payload, std)
 	case CmdChargeProgressV2: // 0x26 充电中(分时计费)
+		std.Extra["cmd"] = "charge_progress_v2"
 		err = a.parseChargeProgressV2(payload, std)
 	case CmdLockNotify: // 0x43 锁充满通知
+		std.Extra["cmd"] = "lock_notify"
 		err = a.parseChargeRecord(payload, std) // 数据格式同03
 	case CmdPortAlarm: // 0x44 端口报警
+		std.Extra["cmd"] = "port_alarm"
 		err = a.parsePortAlarm(payload, std)
 	default:
 		std.Extra["raw_cmd"] = fmt.Sprintf("0x%02X", cmd)
@@ -245,15 +244,12 @@ func (a *AP3000Adapter) Decode(raw []byte) (*model.StandardData, error) {
 }
 
 // parseLogin 解析0x01登录包
+// 协议格式: 固件版本(2B) + 电压(2B) + 端口数量(1B) + 各端口状态(nB) + 各端口功率(n*2B) + 各端口峰值功率(n*2B) + 节点ID(1B) + 信号强度(1B) + 设备类型(1B) + 温度(1B) + 工作模式(1B)
 func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
-	if len(data) < 1 {
+	if len(data) < 2 {
 		return fmt.Errorf("login data too short")
 	}
 	offset := 0
-
-	// 设备类型 (1字节)
-	std.DeviceTypeCode = int(data[offset])
-	offset++
 
 	// 固件版本 (2字节, 小端, 100=V1.00)
 	if offset+2 <= len(data) {
@@ -275,7 +271,7 @@ func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
 	}
 
 	// 各端口状态 (n字节)
-	if offset+std.PortCount <= len(data) {
+	if std.PortCount > 0 && offset+std.PortCount <= len(data) {
 		std.PortData = make([]model.PortData, std.PortCount)
 		for i := 0; i < std.PortCount; i++ {
 			std.PortData[i] = model.PortData{
@@ -287,7 +283,7 @@ func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
 	}
 
 	// 各端口当前功率 (n*2字节, 0.1W)
-	if offset+std.PortCount*2 <= len(data) {
+	if std.PortCount > 0 && offset+std.PortCount*2 <= len(data) {
 		for i := 0; i < std.PortCount; i++ {
 			std.PortData[i].Power = float64(binary.LittleEndian.Uint16(data[offset:offset+2])) * 0.1
 			offset += 2
@@ -295,7 +291,7 @@ func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
 	}
 
 	// 各端口峰值功率 (n*2字节, 0.1W)
-	if offset+std.PortCount*2 <= len(data) {
+	if std.PortCount > 0 && offset+std.PortCount*2 <= len(data) {
 		for i := 0; i < std.PortCount; i++ {
 			std.PortData[i].PeakPower = float64(binary.LittleEndian.Uint16(data[offset:offset+2])) * 0.1
 			offset += 2
@@ -314,11 +310,9 @@ func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
 		offset++
 	}
 
-	// 设备类型(扩展, 1字节)
+	// 设备类型 (1字节)
 	if offset < len(data) {
-		if std.DeviceTypeCode == 0 {
-			std.DeviceTypeCode = int(data[offset])
-		}
+		std.DeviceTypeCode = int(data[offset])
 		offset++
 	}
 
@@ -337,17 +331,14 @@ func (a *AP3000Adapter) parseLogin(data []byte, std *model.StandardData) error {
 }
 
 // parseRegister 解析0x20注册包
+// 协议格式: 固件版本(2B) + 端口数量(1B) + 节点ID(1B) + 设备类型(1B) + 工作模式(1B) + 电源固件版本(2B) + 计时计费(1B) + TC模式(1B)
 func (a *AP3000Adapter) parseRegister(data []byte, std *model.StandardData) error {
-	if len(data) < 1 {
+	if len(data) < 2 {
 		return fmt.Errorf("register data too short")
 	}
 	offset := 0
 
-	// 设备类型 (1字节)
-	std.DeviceTypeCode = int(data[offset])
-	offset++
-
-	// 固件版本 (2字节)
+	// 固件版本 (2字节, 小端, 100=V1.00)
 	if offset+2 <= len(data) {
 		fwVer := binary.LittleEndian.Uint16(data[offset : offset+2])
 		std.FirmwareVer = fmt.Sprintf("V%d.%02d", fwVer/100, fwVer%100)
@@ -366,11 +357,9 @@ func (a *AP3000Adapter) parseRegister(data []byte, std *model.StandardData) erro
 		offset++
 	}
 
-	// 设备类型(扩展, 1字节)
+	// 设备类型 (1字节)
 	if offset < len(data) {
-		if std.DeviceTypeCode == 0 {
-			std.DeviceTypeCode = int(data[offset])
-		}
+		std.DeviceTypeCode = int(data[offset])
 		offset++
 	}
 
@@ -866,6 +855,21 @@ func (a *AP3000Adapter) buildFrame(devID uint32, msgID uint16, cmd byte, data []
 func (a *AP3000Adapter) AutoReply(raw []byte, std *model.StandardData) []byte {
 	cmdStr, _ := std.Extra["cmd"].(string)
 	switch cmdStr {
+	case "register": // 0x20 设备注册 - 返回 0x00(成功)
+		devID := binary.LittleEndian.Uint32(raw[HeaderLen+LenLen : HeaderLen+LenLen+DevIDLen])
+		msgID := binary.LittleEndian.Uint16(raw[HeaderLen+LenLen+DevIDLen : HeaderLen+LenLen+DevIDLen+MsgIDLen])
+		return a.buildFrame(devID, msgID, CmdRegister, []byte{0x00})
+
+	case "login": // 0x01 设备登录(旧版) - 返回 0x00(成功)
+		devID := binary.LittleEndian.Uint32(raw[HeaderLen+LenLen : HeaderLen+LenLen+DevIDLen])
+		msgID := binary.LittleEndian.Uint16(raw[HeaderLen+LenLen+DevIDLen : HeaderLen+LenLen+DevIDLen+MsgIDLen])
+		return a.buildFrame(devID, msgID, CmdLogin, []byte{0x00})
+
+	case "status_report": // 0x21 设备状态上报 - 返回 0x00(成功)
+		devID := binary.LittleEndian.Uint32(raw[HeaderLen+LenLen : HeaderLen+LenLen+DevIDLen])
+		msgID := binary.LittleEndian.Uint16(raw[HeaderLen+LenLen+DevIDLen : HeaderLen+LenLen+DevIDLen+MsgIDLen])
+		return a.buildFrame(devID, msgID, CmdStatusReport, []byte{0x00})
+
 	case "get_time":
 		// 从原始请求帧中提取 devID 和 msgID，原样回复
 		devID := binary.LittleEndian.Uint32(raw[HeaderLen+LenLen : HeaderLen+LenLen+DevIDLen])

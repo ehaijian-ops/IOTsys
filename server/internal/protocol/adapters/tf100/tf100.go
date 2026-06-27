@@ -300,34 +300,48 @@ func (a *TF100Adapter) Decode(raw []byte) (*model.StandardData, error) {
 
 	switch msg.MsgType {
 	case MsgRegister: // 20
+		std.Extra["cmd"] = "register"
 		a.parseRegister(&msg, std)
 	case MsgStatusReport: // 21
+		std.Extra["cmd"] = "status_report"
 		a.parseStatusReport(&msg, std)
 	case MsgSwipeCard: // 2
+		std.Extra["cmd"] = "swipe_card"
 		a.parseSwipeCard(&msg, std)
 	case MsgChargeRecord: // 3
+		std.Extra["cmd"] = "charge_record"
 		a.parseChargeRecord(&msg, std)
 	case MsgDeviceAlarm: // 4
+		std.Extra["cmd"] = "device_alarm"
 		a.parseDeviceAlarm(&msg, std)
 	case MsgChargeProgress: // 6
+		std.Extra["cmd"] = "charge_progress"
 		a.parseChargeProgress(&msg, std)
 	case MsgCommInfo: // 11
+		std.Extra["cmd"] = "comm_info"
 		a.parseCommInfo(&msg, std)
 	case MsgMeterEnergy: // 17
+		std.Extra["cmd"] = "meter_energy"
 		a.parseMeterEnergy(&msg, std)
 	case MsgGetTime: // 22
 		std.Extra["cmd"] = "get_time"
 	case MsgPushInfo: // 23
+		std.Extra["cmd"] = "push_info"
 		a.parsePushInfo(&msg, std)
 	case MsgLockHeartbeat: // 24
+		std.Extra["cmd"] = "lock_heartbeat"
 		a.parseLockHeartbeat(&msg, std)
 	case MsgLockOccupied: // 25
+		std.Extra["cmd"] = "lock_occupied"
 		a.parseLockOccupied(&msg, std)
 	case MsgLockStatus: // 26
+		std.Extra["cmd"] = "lock_status"
 		a.parseLockStatus(&msg, std)
 	case MsgLockAddrQuery: // 27
+		std.Extra["cmd"] = "lock_addr_query"
 		a.parseLockAddrQuery(&msg, std)
 	case MsgGunTimeline: // 28
+		std.Extra["cmd"] = "gun_timeline"
 		a.parseGunTimeline(&msg, std)
 	default:
 		std.Extra["raw_msg_type"] = msg.MsgType

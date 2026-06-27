@@ -3,6 +3,7 @@ package migrations
 import (
 	"iot-platform/internal/device/model"
 	cmdService "iot-platform/internal/command/service"
+	userModel "iot-platform/internal/user/model"
 
 	"gorm.io/gorm"
 )
@@ -17,9 +18,7 @@ func AutoMigrate(db *gorm.DB) error {
 		// 指令管理
 		&cmdService.DeviceCommand{},
 
-		// TODO: 后续添加更多表
-		// &alert.Alert{},
-		// &user.User{},
-		// &report.ChargeRecord{},
+		// 用户管理
+		&userModel.User{},
 	)
 }

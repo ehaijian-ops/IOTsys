@@ -23,29 +23,32 @@ import (
 
 // Server TCP 设备接入服务器
 type Server struct {
-	cfg       config.TCPConfig
-	listener  net.Listener
-	sessions  sync.Map            // deviceID -> *Session
-	connCount atomic.Int64
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	producer  kafka.MessagePublisher
-	sseHub    *sse.Hub
+	cfg            config.TCPConfig
+	listener       net.Listener
+	sessions       sync.Map // deviceID -> *Session
+	connCount      atomic.Int64
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	producer       kafka.MessagePublisher
+	sseHub         *sse.Hub
+	deviceUUIDLookup func(protocolDeviceID string) string // 协议层DeviceID → DB UUID 映射
 }
 
 // Session 设备会话
 type Session struct {
-	ID          string
-	DeviceID         string
-	Protocol         string
-	Conn             net.Conn
-	ConnectedAt      time.Time
-	LastActive       time.Time
-	RemoteAddr       string
-	WsdSessionID     []byte // WSD协议登录时分配的SESSION_ID，心跳ACK回显使用
-	ctx              context.Context
-	cancel           context.CancelFunc
+	ID            string
+	DeviceID      string
+	Protocol      string
+	SimCardNumber string    // 通信模块SIM卡号(20字节ASCII)，AP3000连接首报文
+	PortCount     int       // 设备上报的端口/枪数量（AP3000=PortCount, TF100=GunCount）
+	Conn          net.Conn
+	ConnectedAt   time.Time
+	LastActive    time.Time
+	RemoteAddr    string
+	WsdSessionID  []byte    // WSD协议登录时分配的SESSION_ID，心跳ACK回显使用
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // NewServer 创建 TCP 服务器
@@ -58,6 +61,12 @@ func NewServer(cfg config.TCPConfig, producer kafka.MessagePublisher, sseHub *ss
 		producer: producer,
 		sseHub:   sseHub,
 	}
+}
+
+// SetDeviceUUIDLookup 设置协议层DeviceID → DB UUID 的查找回调
+// 调用者（main）注入数据库查询，tcpserver 设置在线状态时同时写入两个 Redis key
+func (s *Server) SetDeviceUUIDLookup(lookup func(protocolDeviceID string) string) {
+	s.deviceUUIDLookup = lookup
 }
 
 // Start 启动 TCP 服务器
@@ -191,6 +200,35 @@ type AutoReplyer interface {
 
 // processData 处理设备上报数据
 func (s *Server) processData(session *Session, raw []byte) {
+	// 检测通信模块SIM卡号首报文（20字节, 0x38 0x39 0x38 0x36 = ASCII "8986"）
+	// 模块每次连上socket第一时间发送，服务器无需应答
+	if isSimCardNumber(raw) {
+		simStr := string(raw)
+		session.SimCardNumber = simStr
+		logger.Info("SIM card number received",
+			zap.String("session_id", session.ID),
+			zap.String("remote_addr", session.RemoteAddr),
+			zap.String("sim_card", simStr),
+			zap.String("hex", hex.EncodeToString(raw)),
+		)
+		// 广播到 SSE 实时日志
+		if s.sseHub != nil {
+			entry := &sse.LogEntry{
+				DeviceID:   simStr,
+				Protocol:   "SIM_CARD",
+				Timestamp:  time.Now().Format("2006-01-02 15:04:05.000"),
+				RemoteAddr: session.RemoteAddr,
+				RawHex:     hex.EncodeToString(raw),
+				MsgType:    "sim_card",
+				Type:       "sim_card",
+				Direction:  "rx",
+				Status:     simStr,
+			}
+			s.sseHub.Broadcast(entry)
+		}
+		return
+	}
+
 	// 如果已识别协议，直接用已知协议解析
 	if session.Protocol != "" {
 		stdData, err := engine.Decode(session.Protocol, raw)
@@ -204,7 +242,14 @@ func (s *Server) processData(session *Session, raw []byte) {
 			s.broadcastRaw(session, raw, "decode_error")
 			return
 		}
-		s.publishDeviceData(session, stdData)
+
+		// 持续刷新在线状态 Redis TTL（首次 detection 后每次数据上报也需刷新）
+		s.updateDeviceOnline(session.DeviceID, session)
+
+		s.publishDeviceData(session, stdData, raw)
+
+		// 从上报数据中更新端口/枪数量
+		s.updatePortCount(session, stdData)
 
 		// 尝试自动回复
 		adapter, _ := engine.GetAdapter(session.Protocol)
@@ -246,10 +291,22 @@ func (s *Server) processData(session *Session, raw []byte) {
 	// 缓存设备在线状态
 	s.updateDeviceOnline(stdData.DeviceID, session)
 
-	s.publishDeviceData(session, stdData)
+	s.publishDeviceData(session, stdData, raw)
+
+	// 从上报数据中更新端口/枪数量
+	s.updatePortCount(session, stdData)
 
 	// 尝试自动回复
 	s.tryAutoReply(session, adapter, raw, stdData)
+}
+
+// updatePortCount 从标准数据中提取端口/枪数量并更新到会话
+func (s *Server) updatePortCount(session *Session, stdData *model.StandardData) {
+	if stdData.PortCount > 0 {
+		session.PortCount = stdData.PortCount
+	} else if stdData.GunCount > 0 {
+		session.PortCount = stdData.GunCount
+	}
 }
 
 // tryAutoReply 如果协议适配器支持自动回复，则构建并发送回复
@@ -379,7 +436,7 @@ func minInt(a, b int) int {
 }
 
 // publishDeviceData 发布设备数据
-func (s *Server) publishDeviceData(session *Session, stdData *model.StandardData) {
+func (s *Server) publishDeviceData(session *Session, stdData *model.StandardData, raw []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -394,7 +451,10 @@ func (s *Server) publishDeviceData(session *Session, stdData *model.StandardData
 
 	// 推送到 SSE 实时日志
 	if s.sseHub != nil {
-		entry := sse.FromStandardData(stdData, session.RemoteAddr)
+		// 提取协议层报文类型
+		msgType, _ := stdData.Extra["cmd"].(string)
+		rawHex := hex.EncodeToString(raw)
+		entry := sse.FromStandardData(stdData, session.RemoteAddr, rawHex, msgType)
 		s.sseHub.Broadcast(entry)
 	}
 
@@ -405,23 +465,35 @@ func (s *Server) publishDeviceData(session *Session, stdData *model.StandardData
 	)
 }
 
-// cacheRealtimeData 缓存实时数据到 Redis
+// cacheRealtimeData 缓存实时数据到 Redis（同时设置协议层ID和UUID两个key）
 func (s *Server) cacheRealtimeData(ctx context.Context, data *model.StandardData) {
-	key := fmt.Sprintf("device:realtime:%s", data.DeviceID)
+	// 格式化为字符串，避免 float64 精度问题（如 234.70000000000002）
 	fields := map[string]interface{}{
-		"voltage":           data.Voltage,
-		"current":           data.Current,
-		"power":             data.Power,
-		"energy_total":      data.EnergyTotal,
-		"energy_today":      data.EnergyToday,
-		"temperature":       data.Temperature,
+		"voltage":           fmt.Sprintf("%.1f", data.Voltage),
+		"current":           fmt.Sprintf("%.2f", data.Current),
+		"power":             fmt.Sprintf("%.2f", data.Power),
+		"energy_total":      fmt.Sprintf("%.2f", data.EnergyTotal),
+		"energy_today":      fmt.Sprintf("%.2f", data.EnergyToday),
+		"temperature":       fmt.Sprintf("%.1f", data.Temperature),
 		"charging_status":   data.ChargingStatus,
 		"updated_at":        data.Timestamp.Format(time.RFC3339),
 	}
 
+	// 以协议层 DeviceID 缓存
+	protocolKey := fmt.Sprintf("device:realtime:%s", data.DeviceID)
 	pipe := redisClient.Client.Pipeline()
-	pipe.HSet(ctx, key, fields)
-	pipe.Expire(ctx, key, 5*time.Minute)
+	pipe.HSet(ctx, protocolKey, fields)
+	pipe.Expire(ctx, protocolKey, 5*time.Minute)
+
+	// 同步以 DB UUID 缓存（如果查询回调可用）
+	if s.deviceUUIDLookup != nil {
+		if dbUUID := s.deviceUUIDLookup(data.DeviceID); dbUUID != "" {
+			uuidKey := fmt.Sprintf("device:realtime:%s", dbUUID)
+			pipe.HSet(ctx, uuidKey, fields)
+			pipe.Expire(ctx, uuidKey, 5*time.Minute)
+		}
+	}
+
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		logger.Error("Failed to cache realtime data", zap.String("device_id", data.DeviceID), zap.Error(err))
@@ -429,12 +501,25 @@ func (s *Server) cacheRealtimeData(ctx context.Context, data *model.StandardData
 }
 
 // updateDeviceOnline 更新设备在线状态
+// 同时设置两个 Redis key：
+//   1. device:online:{protocolDeviceID}  （协议层ID）
+//   2. device:online:{dbUUID}             （数据库UUID，如果查找回调可用）
 func (s *Server) updateDeviceOnline(deviceID string, session *Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
+	// 设置协议层 DeviceID 的在线标记
 	key := fmt.Sprintf("device:online:%s", deviceID)
 	redisClient.Client.Set(ctx, key, "1", 2*time.Minute)
+
+	// 查找 DB UUID 并同步设置（解决协议层ID与数据库UUID不一致的问题）
+	if s.deviceUUIDLookup != nil {
+		if dbUUID := s.deviceUUIDLookup(deviceID); dbUUID != "" {
+			uuidKey := fmt.Sprintf("device:online:%s", dbUUID)
+			redisClient.Client.Set(ctx, uuidKey, "1", 2*time.Minute)
+			redisClient.Client.SAdd(ctx, "devices:online", dbUUID)
+		}
+	}
 
 	sessionKey := fmt.Sprintf("device:session:%s", deviceID)
 	redisClient.Client.HSet(ctx, sessionKey, map[string]interface{}{
@@ -467,9 +552,18 @@ func (s *Server) onDisconnect(session *Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// 清除在线状态
+	// 清除在线状态（协议层 DeviceID）
 	redisClient.Client.Del(ctx, fmt.Sprintf("device:online:%s", session.DeviceID))
 	redisClient.Client.SRem(ctx, "devices:online", session.DeviceID)
+
+	// 同步清除 DB UUID 对应的在线标记
+	if s.deviceUUIDLookup != nil {
+		if dbUUID := s.deviceUUIDLookup(session.DeviceID); dbUUID != "" {
+			redisClient.Client.Del(ctx, fmt.Sprintf("device:online:%s", dbUUID))
+			redisClient.Client.SRem(ctx, "devices:online", dbUUID)
+		}
+	}
+
 	if session.Protocol != "" {
 		redisClient.Client.SRem(ctx, fmt.Sprintf("protocol:online:%s", session.Protocol), session.DeviceID)
 	}
@@ -567,4 +661,45 @@ func (s *Server) GetSession(deviceID string) (*Session, bool) {
 		return nil, false
 	}
 	return val.(*Session), true
+}
+
+// SessionBrief 会话摘要（供外部API使用，不暴露net.Conn等敏感字段）
+type SessionBrief struct {
+	DeviceID      string    `json:"device_id"`
+	Protocol      string    `json:"protocol"`
+	SimCardNumber string    `json:"sim_card_number,omitempty"`
+	PortCount     int       `json:"port_count"`
+	RemoteAddr    string    `json:"remote_addr"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastActive    time.Time `json:"last_active"`
+}
+
+// GetOnlineSessionBriefs 获取所有在线设备的会话摘要
+func (s *Server) GetOnlineSessionBriefs() []SessionBrief {
+	var briefs []SessionBrief
+	s.sessions.Range(func(key, value interface{}) bool {
+		sess := value.(*Session)
+		if sess.DeviceID != "" {
+			briefs = append(briefs, SessionBrief{
+				DeviceID:      sess.DeviceID,
+				Protocol:      sess.Protocol,
+				SimCardNumber: sess.SimCardNumber,
+				PortCount:     sess.PortCount,
+				RemoteAddr:    sess.RemoteAddr,
+				ConnectedAt:   sess.ConnectedAt,
+				LastActive:    sess.LastActive,
+			})
+		}
+		return true
+	})
+	return briefs
+}
+
+// isSimCardNumber 检测是否为通信模块SIM卡号报文
+// 格式: 20字节ASCII字符串，固定以0x38 0x39 0x38 0x36 ("8986")开头
+func isSimCardNumber(raw []byte) bool {
+	if len(raw) != 20 {
+		return false
+	}
+	return raw[0] == 0x38 && raw[1] == 0x39 && raw[2] == 0x38 && raw[3] == 0x36
 }

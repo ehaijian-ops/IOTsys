@@ -77,14 +77,14 @@ func (r *DeviceRepository) List(ctx context.Context, query DeviceQuery) ([]model
 	if query.Protocol != "" {
 		db = db.Where("protocol = ?", query.Protocol)
 	}
-	if query.Status != "" {
+	if !query.SkipStatusFilter && query.Status != "" {
 		db = db.Where("status = ?", query.Status)
 	}
 	if query.SiteID != "" {
 		db = db.Where("site_id = ?", query.SiteID)
 	}
 	if query.Keyword != "" {
-		db = db.Where("sn LIKE ? OR vendor LIKE ?", "%"+query.Keyword+"%", "%"+query.Keyword+"%")
+		db = db.Where("sn LIKE ? OR manufacturer LIKE ?", "%"+query.Keyword+"%", "%"+query.Keyword+"%")
 	}
 
 	db.Count(&total)
@@ -111,11 +111,12 @@ func (r *DeviceRepository) UpdateStatus(ctx context.Context, id, status string) 
 
 // DeviceQuery 设备查询参数
 type DeviceQuery struct {
-	DeviceType string `form:"device_type"`
-	Protocol   string `form:"protocol"`
-	Status     string `form:"status"`
-	SiteID     string `form:"site_id"`
-	Keyword    string `form:"keyword"`
-	Page       int    `form:"page"`
-	PageSize   int    `form:"page_size"`
+	DeviceType       string `form:"device_type"`
+	Protocol         string `form:"protocol"`
+	Status           string `form:"status"`
+	SiteID           string `form:"site_id"`
+	Keyword          string `form:"keyword"`
+	Page             int    `form:"page"`
+	PageSize         int    `form:"page_size"`
+	SkipStatusFilter bool   // 内部标记：跳过SQL层status筛选，改用Redis实时状态
 }

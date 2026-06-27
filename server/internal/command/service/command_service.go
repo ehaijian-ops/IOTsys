@@ -35,15 +35,25 @@ func NewCommandService(db *gorm.DB, producer kafka.MessagePublisher, tcpSrv *tcp
 
 // CreateCommand 创建并下发指令
 func (s *CommandService) CreateCommand(ctx context.Context, deviceID, cmdType string, params map[string]interface{}, userID string) (*DeviceCommand, error) {
-	// 检查设备是否在线
-	if _, ok := s.tcpSrv.GetSession(deviceID); !ok {
-		return nil, errors.ErrDeviceOffline
-	}
-
-	// 获取设备协议信息
-	protocol, err := s.getDeviceProtocol(ctx, deviceID)
+	// 获取设备协议信息和 SN
+	protocol, sn, err := s.getDeviceInfo(ctx, deviceID)
 	if err != nil {
 		return nil, err
+	}
+
+	// 检查设备是否在线（tcpserver sessions 以协议层 DeviceID = SN 为 key，非 DB UUID）
+	sessionDeviceID := sn
+	if sn == "" {
+		sessionDeviceID = deviceID
+	}
+	if _, ok := s.tcpSrv.GetSession(sessionDeviceID); !ok {
+		logger.Warn("Device offline or session not found",
+			zap.String("db_device_id", deviceID),
+			zap.String("sn", sn),
+			zap.String("session_device_id", sessionDeviceID),
+			zap.String("cmd_type", cmdType),
+		)
+		return nil, errors.ErrDeviceOffline
 	}
 
 	commandID := uuid.New().String()
@@ -67,7 +77,7 @@ func (s *CommandService) CreateCommand(ctx context.Context, deviceID, cmdType st
 	// 构建标准指令
 	stdCmd := &model.StandardCommand{
 		CommandID: commandID,
-		DeviceID:  deviceID,
+		DeviceID:  sessionDeviceID, // 使用协议层 DeviceID，确保 tcpserver 能找到设备
 		Protocol:  protocol,
 		CmdType:   cmdType,
 		Params:    params,
@@ -88,8 +98,8 @@ func (s *CommandService) CreateCommand(ctx context.Context, deviceID, cmdType st
 	cmd.Status = "sent"
 	s.db.Save(cmd)
 
-	// 发送到设备
-	if err := s.tcpSrv.SendCommand(deviceID, frame); err != nil {
+	// 发送到设备（使用 sessionDeviceID，可能是 SN，tcpserver 以此 key 存储 session）
+	if err := s.tcpSrv.SendCommand(sessionDeviceID, frame); err != nil {
 		cmd.Status = "failed"
 		cmd.Result = map[string]interface{}{"error": err.Error()}
 		s.db.Save(cmd)
@@ -152,22 +162,23 @@ func (s *CommandService) UpdateCommandStatus(ctx context.Context, commandID, sta
 	return nil
 }
 
-// getDeviceProtocol 获取设备协议
-func (s *CommandService) getDeviceProtocol(ctx context.Context, deviceID string) (string, error) {
+// getDeviceInfo 获取设备协议和 SN
+func (s *CommandService) getDeviceInfo(ctx context.Context, deviceID string) (protocol string, sn string, err error) {
 	var device struct {
 		Protocol string
+		SN       string
 	}
 	if err := s.db.WithContext(ctx).
 		Table("devices").
-		Select("protocol").
+		Select("protocol, sn").
 		Where("id = ?", deviceID).
 		First(&device).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return "", errors.NotFound("Device", deviceID)
+			return "", "", errors.NotFound("Device", deviceID)
 		}
-		return "", err
+		return "", "", err
 	}
-	return device.Protocol, nil
+	return device.Protocol, device.SN, nil
 }
 
 // DeviceCommand 指令数据模型

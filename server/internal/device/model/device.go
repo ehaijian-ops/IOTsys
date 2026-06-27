@@ -8,10 +8,11 @@ type Device struct {
 	SN               string    `json:"sn" gorm:"uniqueIndex;size:64;not null"`
 	DeviceType       string    `json:"device_type" gorm:"size:20;not null"`    // ebike_charger / ev_charger
 	Protocol         string    `json:"protocol" gorm:"size:50;not null"`       // AP3000_v2 / TF100_v1
-	Vendor           string    `json:"vendor" gorm:"size:100"`
+	Manufacturer     string    `json:"manufacturer" gorm:"size:100"`           // 设备厂家/制造商
 	Model            string    `json:"model" gorm:"size:100"`
 	SiteID           string    `json:"site_id" gorm:"index;size:36"`
 	InstallLocation  string    `json:"install_location" gorm:"size:255"`
+	PortCount        int       `json:"port_count" gorm:"default:1;not null"`  // 设备端口数量
 	FirmwareVersion  string    `json:"firmware_version" gorm:"size:50"`
 	Status           string    `json:"status" gorm:"size:20;default:offline"` // online/offline/fault/maintenance
 	LastOnlineAt     *time.Time `json:"last_online_at"`

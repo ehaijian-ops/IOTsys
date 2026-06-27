@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 import Layout from '@/layout/index.vue'
 
 const routes: RouteRecordRaw[] = [
@@ -25,6 +26,12 @@ const routes: RouteRecordRaw[] = [
         name: 'Devices',
         component: () => import('@/views/devices/index.vue'),
         meta: { title: '设备管理', icon: 'Monitor' },
+      },
+      {
+        path: 'devices/unregistered',
+        name: 'UnregisteredDevices',
+        component: () => import('@/views/devices/unregistered.vue'),
+        meta: { title: '未注册设备', icon: 'Warning' },
       },
       {
         path: 'devices/:id',
@@ -74,6 +81,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/index.vue'),
         meta: { title: '系统监控', icon: 'Setting' },
       },
+      {
+        path: 'users',
+        name: 'Users',
+        component: () => import('@/views/users/index.vue'),
+        meta: { title: '用户管理', icon: 'User', roles: ['admin', 'super_admin'] },
+      },
     ],
   },
 ]
@@ -81,6 +94,32 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+// 路由守卫：未登录跳转登录页
+router.beforeEach((to, _from, next) => {
+  if (to.path === '/login') {
+    next()
+    return
+  }
+
+  const userStore = useUserStore()
+  if (!userStore.isLoggedIn()) {
+    next('/login')
+    return
+  }
+
+  // 角色权限检查
+  const requiredRoles = to.meta.roles as string[] | undefined
+  if (requiredRoles && requiredRoles.length > 0) {
+    const userRole = userStore.user?.role
+    if (!userRole || !requiredRoles.includes(userRole)) {
+      next('/dashboard')
+      return
+    }
+  }
+
+  next()
 })
 
 export default router

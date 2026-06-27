@@ -31,6 +31,7 @@ type LogEntry struct {
 	Protocol    string  `json:"protocol"`
 	Timestamp   string  `json:"timestamp"`
 	MsgID       int     `json:"msg_id"`
+	MsgType     string  `json:"msg_type,omitempty"` // 协议层报文类型: login/heartbeat/data_report/fault_report 等
 	Voltage     float64 `json:"voltage"`
 	Current     float64 `json:"current"`
 	Power       float64 `json:"power"`
@@ -39,9 +40,9 @@ type LogEntry struct {
 	Temperature float64 `json:"temperature"`
 	FaultCode   string  `json:"fault_code,omitempty"`
 	RemoteAddr  string  `json:"remote_addr,omitempty"`
-	RawHex      string  `json:"raw_hex,omitempty"`
-	Type        string  `json:"type"`      // "data" / "raw" / "reply" / "connect" / "disconnect"
-	Direction   string  `json:"direction"` // "rx"=设备→服务器(接收), "tx"=服务器→设备(发送)
+	RawHex      string  `json:"raw_hex,omitempty"` // 原始报文十六进制
+	Type        string  `json:"type"`              // "data" / "raw" / "reply" / "connect" / "disconnect"
+	Direction   string  `json:"direction"`         // "rx"=设备→服务器(接收), "tx"=服务器→设备(发送)
 }
 
 // Hub SSE 消息分发中心
@@ -167,12 +168,13 @@ func (h *Hub) Broadcast(entry *LogEntry) {
 }
 
 // FromStandardData 将 StandardData 转为 LogEntry
-func FromStandardData(data *model.StandardData, remoteAddr string) *LogEntry {
+func FromStandardData(data *model.StandardData, remoteAddr string, rawHex string, msgType string) *LogEntry {
 	return &LogEntry{
 		DeviceID:    data.DeviceID,
 		Protocol:    data.Protocol,
 		Timestamp:   data.Timestamp.Format("2006-01-02 15:04:05.000"),
 		MsgID:       data.MsgID,
+		MsgType:     msgType,
 		Voltage:     data.Voltage,
 		Current:     data.Current,
 		Power:       data.Power,
@@ -181,6 +183,7 @@ func FromStandardData(data *model.StandardData, remoteAddr string) *LogEntry {
 		Temperature: data.Temperature,
 		FaultCode:   data.FaultCode,
 		RemoteAddr:  remoteAddr,
+		RawHex:      rawHex,
 		Type:        "data",
 		Direction:   "rx",
 	}

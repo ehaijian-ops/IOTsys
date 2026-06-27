@@ -2,7 +2,7 @@
   <div class="page-container">
     <div class="page-header">
       <h2>设备管理</h2>
-      <el-button type="primary" @click="showCreateDialog = true">
+      <el-button type="primary" @click="openCreateDialog">
         <el-icon><Plus /></el-icon> 新增设备
       </el-button>
     </div>
@@ -31,7 +31,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
-          <el-input v-model="query.keyword" placeholder="SN/厂商" clearable style="width: 200px" />
+          <el-input v-model="query.keyword" placeholder="SN/设备厂家" clearable style="width: 200px" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="fetchDevices">查询</el-button>
@@ -52,7 +52,8 @@
           </template>
         </el-table-column>
         <el-table-column prop="protocol" label="协议" width="120" />
-        <el-table-column prop="vendor" label="厂商" width="120" />
+        <el-table-column prop="manufacturer" label="设备厂家" width="120" />
+        <el-table-column prop="port_count" label="端口数" width="80" align="center" />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">
@@ -86,7 +87,7 @@
     </el-card>
 
     <!-- 新增/编辑设备对话框 -->
-    <el-dialog v-model="showCreateDialog" title="新增设备" width="550px">
+    <el-dialog v-model="showCreateDialog" :title="currentDevice ? '编辑设备' : '新增设备'" width="550px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="设备SN" required>
           <el-input v-model="form.sn" placeholder="请输入设备序列号" />
@@ -104,8 +105,8 @@
             <el-option label="TF100_v1 (汽车-特来电)" value="TF100_v1" />
           </el-select>
         </el-form-item>
-        <el-form-item label="厂商">
-          <el-input v-model="form.vendor" />
+        <el-form-item label="设备厂家">
+          <el-input v-model="form.manufacturer" placeholder="设备制造商" />
         </el-form-item>
         <el-form-item label="设备型号">
           <el-input v-model="form.model" />
@@ -159,7 +160,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getDevices, type Device, type DeviceQuery } from '@/api/device'
+import { getDevices, createDevice, updateDevice, deleteDevice, type Device, type DeviceQuery } from '@/api/device'
 
 const router = useRouter()
 const loading = ref(false)
@@ -171,17 +172,6 @@ const query = reactive<DeviceQuery>({
   page_size: 20,
 })
 
-// 模拟数据
-const mockDevices: Device[] = [
-  { id: '1', sn: 'AP3000-001', device_type: 'ebike_charger', protocol: 'AP3000_v2', vendor: '安平科技', model: 'AP3000', site_id: '', install_location: 'A区1号棚', firmware_version: 'v2.1.0', status: 'online', last_online_at: '2026-06-19 00:45:00', created_at: '', updated_at: '' },
-  { id: '2', sn: 'AP3000-002', device_type: 'ebike_charger', protocol: 'AP3000_v2', vendor: '安平科技', model: 'AP3000', site_id: '', install_location: 'A区2号棚', firmware_version: 'v2.1.0', status: 'charging', last_online_at: '2026-06-19 00:44:00', created_at: '', updated_at: '' },
-  { id: '3', sn: 'TF100-001', device_type: 'ev_charger', protocol: 'TF100_v1', vendor: '特来电', model: 'TF100', site_id: '', install_location: 'B1停车位', firmware_version: 'v1.5.0', status: 'online', last_online_at: '2026-06-19 00:45:00', created_at: '', updated_at: '' },
-  { id: '4', sn: 'TF100-002', device_type: 'ev_charger', protocol: 'TF100_v1', vendor: '特来电', model: 'TF100', site_id: '', install_location: 'B2停车位', firmware_version: 'v1.5.0', status: 'offline', last_online_at: '2026-06-18 23:30:00', created_at: '', updated_at: '' },
-  { id: '5', sn: 'AP3000-005', device_type: 'ebike_charger', protocol: 'AP3000_v2', vendor: '安平科技', model: 'AP3000', site_id: '', install_location: 'C区1号棚', firmware_version: 'v2.1.0', status: 'fault', last_online_at: '2026-06-19 00:40:00', created_at: '', updated_at: '' },
-  { id: '6', sn: 'WSD-001', device_type: 'ebike_charger', protocol: 'WSD_v1', vendor: '微小电', model: 'WSD-12', site_id: '', install_location: 'D区1号棚', firmware_version: 'V1.0', status: 'online', last_online_at: '2026-06-19 00:45:00', created_at: '', updated_at: '' },
-  { id: '7', sn: 'WSD-002', device_type: 'ebike_charger', protocol: 'WSD_v1', vendor: '微小电', model: 'WSD-12', site_id: '', install_location: 'D区2号棚', firmware_version: 'V1.0', status: 'charging', last_online_at: '2026-06-19 00:44:00', created_at: '', updated_at: '' },
-]
-
 const showCreateDialog = ref(false)
 const showCommandDialog = ref(false)
 const currentDevice = ref<Device | null>(null)
@@ -190,7 +180,7 @@ const form = reactive({
   sn: '',
   device_type: 'ebike_charger',
   protocol: 'AP3000_v2',
-  vendor: '',
+  manufacturer: '',
   model: '',
   install_location: '',
   firmware_version: '',
@@ -201,14 +191,17 @@ const commandForm = reactive({
   params: {} as Record<string, any>,
 })
 
-function fetchDevices() {
+async function fetchDevices() {
   loading.value = true
-  // 使用模拟数据
-  setTimeout(() => {
-    devices.value = mockDevices
-    total.value = mockDevices.length
+  try {
+    const res = await getDevices(query)
+    devices.value = res.data || []
+    total.value = res.total || 0
+  } catch {
+    // error handled by interceptor
+  } finally {
     loading.value = false
-  }, 500)
+  }
 }
 
 function resetQuery() {
@@ -251,24 +244,70 @@ function openCommandDialog(device: Device) {
   showCommandDialog.value = true
 }
 
-function openEditDialog(device: Device) {
-  Object.assign(form, device)
+function openCreateDialog() {
+  currentDevice.value = null
+  form.sn = ''
+  form.device_type = 'ebike_charger'
+  form.protocol = 'AP3000_v2'
+  form.manufacturer = ''
+  form.model = ''
+  form.install_location = ''
+  form.firmware_version = ''
   showCreateDialog.value = true
 }
 
-function handleCreate() {
-  ElMessage.success('设备创建成功')
-  showCreateDialog.value = false
-  fetchDevices()
+function openEditDialog(device: Device) {
+  currentDevice.value = device
+  form.sn = device.sn
+  form.device_type = device.device_type
+  form.protocol = device.protocol
+  form.manufacturer = device.manufacturer || ''
+  form.model = device.model || ''
+  form.install_location = device.install_location || ''
+  form.firmware_version = device.firmware_version || ''
+  showCreateDialog.value = true
 }
 
-function handleDelete(device: Device) {
-  ElMessageBox.confirm(`确定要删除设备 ${device.sn} 吗？`, '确认删除', {
-    type: 'warning',
-  }).then(() => {
+async function handleCreate() {
+  loading.value = true
+  try {
+    if (currentDevice.value) {
+      // 编辑模式
+      await updateDevice(currentDevice.value.id, {
+        device_type: form.device_type,
+        protocol: form.protocol,
+        manufacturer: form.manufacturer,
+        model: form.model,
+        install_location: form.install_location,
+        firmware_version: form.firmware_version,
+      } as any)
+      ElMessage.success('设备更新成功')
+    } else {
+      // 新增模式
+      await createDevice(form as any)
+      ElMessage.success('设备创建成功')
+    }
+    showCreateDialog.value = false
+    currentDevice.value = null
+    fetchDevices()
+  } catch {
+    // error handled by interceptor
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleDelete(device: Device) {
+  try {
+    await ElMessageBox.confirm(`确定要删除设备 ${device.sn} 吗？`, '确认删除', {
+      type: 'warning',
+    })
+    await deleteDevice(device.id)
     ElMessage.success('设备已删除')
     fetchDevices()
-  })
+  } catch {
+    // cancelled or error
+  }
 }
 
 function handleSendCommand() {

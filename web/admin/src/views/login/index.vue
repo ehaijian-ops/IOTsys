@@ -7,7 +7,7 @@
         <p>物联网设备数据采集与指令下发系统</p>
       </div>
 
-      <el-form ref="formRef" :model="form" :rules="rules" size="large">
+      <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="handleLogin">
         <el-form-item prop="username">
           <el-input v-model="form.username" placeholder="请输入用户名" prefix-icon="User" />
         </el-form-item>
@@ -32,9 +32,12 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 const loading = ref(false)
+const formRef = ref()
 
 const form = reactive({
   username: 'admin',
@@ -43,17 +46,24 @@ const form = reactive({
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur', min: 6, max: 64 }],
 }
 
-function handleLogin() {
+async function handleLogin() {
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+
   loading.value = true
-  setTimeout(() => {
-    loading.value = false
-    localStorage.setItem('access_token', 'mock-token')
+  try {
+    await userStore.login(form.username, form.password)
     ElMessage.success('登录成功')
     router.push('/dashboard')
-  }, 1000)
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || e?.message || '登录失败'
+    ElMessage.error(msg)
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 

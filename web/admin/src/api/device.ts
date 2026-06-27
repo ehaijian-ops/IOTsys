@@ -6,10 +6,11 @@ export interface Device {
   sn: string
   device_type: string
   protocol: string
-  vendor: string
+  manufacturer: string
   model: string
   site_id: string
   install_location: string
+  port_count: number
   firmware_version: string
   status: string
   last_online_at: string
@@ -73,3 +74,36 @@ export function sendCommand(deviceId: string, cmdType: string, params: Record<st
 export function getDeviceCommands(deviceId: string, params: { page?: number; page_size?: number }) {
   return http.get(`/devices/${deviceId}/commands`, { params })
 }
+
+// ========== 未注册设备 ==========
+
+export interface UnregisteredDevice {
+  device_id: string
+  protocol: string
+  sim_card_number: string
+  port_count: number   // 设备上报的端口/枪数量，0 表示尚未上报
+  remote_addr: string
+  connected_at: string
+  last_active: string
+  last_msg_type: string
+}
+
+// 获取未注册设备列表
+export function getUnregisteredDevices() {
+  return http.get<any, { code: string; data: UnregisteredDevice[]; total: number }>('/devices/unregistered')
+}
+
+// 将未注册设备添加到站点
+export function addUnregisteredToSite(data: {
+  device_id: string
+  protocol: string
+  device_type: string
+  site_id: string
+  install_location?: string
+  port_count: number
+  manufacturer?: string
+}) {
+  return http.post('/devices/unregistered/add', data)
+}
+
+
