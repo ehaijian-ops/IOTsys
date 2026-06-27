@@ -45,6 +45,71 @@
           <span>站点管理</span>
         </el-menu-item>
 
+        <el-menu-item index="/statistics">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>数据统计</span>
+        </el-menu-item>
+
+        <el-sub-menu index="order-group">
+          <template #title>
+            <el-icon><Tickets /></el-icon>
+            <span>订单管理</span>
+          </template>
+          <el-menu-item index="/orders">全部订单</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="operations-group">
+          <template #title>
+            <el-icon><SetUp /></el-icon>
+            <span>运营管理</span>
+          </template>
+          <el-menu-item index="/operations/billing">收费方案</el-menu-item>
+          <el-menu-item index="/operations/ads">广告运营</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="finance-group">
+          <template #title>
+            <el-icon><Wallet /></el-icon>
+            <span>财务管理</span>
+          </template>
+          <el-menu-item index="/finance/recharges">财务中心</el-menu-item>
+          <el-menu-item index="/finance/agents">代理运营商</el-menu-item>
+        </el-sub-menu>
+
+        <el-menu-item index="/cards">
+          <el-icon><CreditCard /></el-icon>
+          <span>卡片管理</span>
+        </el-menu-item>
+
+        <el-sub-menu index="device-group2">
+          <template #title>
+            <el-icon><Setting /></el-icon>
+            <span>设备扩展</span>
+          </template>
+          <el-menu-item index="/devices/advanced">设备高级</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="maintenance-group">
+          <template #title>
+            <el-icon><Tools /></el-icon>
+            <span>运维管理</span>
+          </template>
+          <el-menu-item index="/maintenance">故障与任务</el-menu-item>
+        </el-sub-menu>
+
+        <el-menu-item index="/interconnect">
+          <el-icon><Share /></el-icon>
+          <span>互联互通</span>
+        </el-menu-item>
+
+        <el-sub-menu index="system-group">
+          <template #title>
+            <el-icon><Setting /></el-icon>
+            <span>系统设置</span>
+          </template>
+          <el-menu-item index="/system/manage">角色与菜单</el-menu-item>
+        </el-sub-menu>
+
         <el-menu-item index="/protocols">
           <el-icon><Connection /></el-icon>
           <span>协议管理</span>

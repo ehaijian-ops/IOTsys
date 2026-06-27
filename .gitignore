@@ -63,3 +63,6 @@ venv/
 config.local.yaml
 *.local.yaml
 .git-credentials
+
+# CodeBuddy
+.codebuddy/

@@ -10,9 +10,18 @@
       <el-col :span="6">
         <el-card class="dashboard-card" shadow="hover">
           <div class="stat-item">
-            <div class="stat-icon online">
-              <el-icon :size="28"><Monitor /></el-icon>
+            <div class="stat-icon user"><el-icon :size="28"><User /></el-icon></div>
+            <div class="stat-content">
+              <div class="stat-number">{{ stats.totalUsers }}</div>
+              <div class="stat-label">用户总数</div>
             </div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card class="dashboard-card" shadow="hover">
+          <div class="stat-item">
+            <div class="stat-icon online"><el-icon :size="28"><Monitor /></el-icon></div>
             <div class="stat-content">
               <div class="stat-number">{{ stats.totalDevices }}</div>
               <div class="stat-label">设备总数</div>
@@ -20,92 +29,76 @@
           </div>
         </el-card>
       </el-col>
-
       <el-col :span="6">
         <el-card class="dashboard-card" shadow="hover">
           <div class="stat-item">
-            <div class="stat-icon charging">
-              <el-icon :size="28"><VideoPlay /></el-icon>
-            </div>
+            <div class="stat-icon energy"><el-icon :size="28"><DataLine /></el-icon></div>
             <div class="stat-content">
-              <div class="stat-number">{{ stats.onlineDevices }}</div>
-              <div class="stat-label">在线设备</div>
+              <div class="stat-number">¥{{ stats.totalAmount }}</div>
+              <div class="stat-label">交易总额</div>
             </div>
           </div>
         </el-card>
       </el-col>
-
       <el-col :span="6">
         <el-card class="dashboard-card" shadow="hover">
           <div class="stat-item">
-            <div class="stat-icon fault">
-              <el-icon :size="28"><WarningFilled /></el-icon>
-            </div>
+            <div class="stat-icon charging"><el-icon :size="28"><VideoPlay /></el-icon></div>
             <div class="stat-content">
-              <div class="stat-number">{{ stats.faultDevices }}</div>
-              <div class="stat-label">故障设备</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-
-      <el-col :span="6">
-        <el-card class="dashboard-card" shadow="hover">
-          <div class="stat-item">
-            <div class="stat-icon energy">
-              <el-icon :size="28"><DataLine /></el-icon>
-            </div>
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.todayEnergy }}</div>
-              <div class="stat-label">今日充电量 (kWh)</div>
+              <div class="stat-number">{{ stats.totalOrders }}</div>
+              <div class="stat-label">总订单数</div>
             </div>
           </div>
         </el-card>
       </el-col>
     </el-row>
 
-    <!-- 设备类型分布 & 在线率 -->
+    <!-- 订单类型分布 & 设备类型分布 -->
     <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="12">
+        <el-card class="dashboard-card">
+          <template #header>
+            <span>订单类型分布</span>
+          </template>
+          <div ref="orderChartRef" style="height: 300px"></div>
+        </el-card>
+      </el-col>
       <el-col :span="12">
         <el-card class="dashboard-card">
           <template #header>
             <span>设备类型分布</span>
           </template>
-          <div ref="typeChartRef" style="height: 300px"></div>
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card class="dashboard-card">
-          <template #header>
-            <span>设备在线率趋势</span>
-          </template>
-          <div ref="onlineChartRef" style="height: 300px"></div>
+          <div ref="siteChartRef" style="height: 300px"></div>
         </el-card>
       </el-col>
     </el-row>
 
-    <!-- 最近告警 -->
+    <!-- 月度统计 -->
+    <el-row style="margin-top: 20px">
+      <el-col :span="24">
+        <el-card class="dashboard-card">
+          <div ref="typeChartRef" style="height: 320px"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 最近故障 -->
     <el-row style="margin-top: 20px">
       <el-col :span="24">
         <el-card class="dashboard-card">
           <template #header>
-            <span>最近告警</span>
+            <span>最近故障</span>
           </template>
-          <el-table :data="recentAlerts" style="width: 100%" size="small">
+          <el-table :data="recentFaults" style="width: 100%" size="small" v-loading="faultLoading">
             <el-table-column prop="device_sn" label="设备" width="180" />
-            <el-table-column prop="alert_type" label="告警类型" width="150">
-              <template #default="{ row }">
-                <el-tag :type="row.severity === 'critical' ? 'danger' : 'warning'" size="small">
-                  {{ row.alert_type }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="message" label="告警内容" />
-            <el-table-column prop="created_at" label="时间" width="180" />
+            <el-table-column prop="device_type" label="设备类型" width="120" />
+            <el-table-column prop="description" label="故障描述" show-overflow-tooltip />
+            <el-table-column prop="reporter_name" label="上报人" width="120" />
+            <el-table-column prop="created_at" label="时间" width="170" />
             <el-table-column prop="status" label="状态" width="100">
               <template #default="{ row }">
-                <el-tag :type="row.status === 'pending' ? 'danger' : 'success'" size="small">
-                  {{ row.status === 'pending' ? '待处理' : '已处理' }}
+                <el-tag :type="row.status === 'pending' ? 'danger' : row.status === 'processing' ? 'warning' : 'success'" size="small">
+                  {{ row.status === 'pending' ? '待处理' : row.status === 'processing' ? '处理中' : '已处理' }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -120,45 +113,97 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import dayjs from 'dayjs'
+import { getDevices } from '@/api/device'
+import { getOrders } from '@/api/order'
+import { getSitesManage } from '@/api/site'
+import { getWechatUsers } from '@/api/advertisement'
+import { getFaults } from '@/api/maintenance'
 
 const currentTime = ref(dayjs().format('YYYY-MM-DD HH:mm:ss'))
 let timer: number
 
 const stats = reactive({
+  totalUsers: 0,
   totalDevices: 0,
+  totalAmount: '0',
+  totalOrders: 0,
   onlineDevices: 0,
-  faultDevices: 0,
-  todayEnergy: '0',
+  totalSites: 0,
 })
 
-const recentAlerts = ref([
-  { device_sn: 'AP3000-001', alert_type: '过温保护', severity: 'warning', message: '设备温度超过85℃', created_at: '2026-06-19 00:30', status: 'pending' },
-  { device_sn: 'TF100-002', alert_type: '通信故障', severity: 'critical', message: '设备离线超过5分钟', created_at: '2026-06-19 00:15', status: 'pending' },
-  { device_sn: 'AP3000-005', alert_type: '过流保护', severity: 'warning', message: '端口3电流异常', created_at: '2026-06-18 23:50', status: 'resolved' },
-])
+const recentFaults = ref<any[]>([])
+const faultLoading = ref(false)
 
 const typeChartRef = ref<HTMLDivElement>()
-const onlineChartRef = ref<HTMLDivElement>()
+const orderChartRef = ref<HTMLDivElement>()
+const siteChartRef = ref<HTMLDivElement>()
 let typeChart: echarts.ECharts | null = null
-let onlineChart: echarts.ECharts | null = null
+let orderChart: echarts.ECharts | null = null
+let siteChart: echarts.ECharts | null = null
 
-onMounted(() => {
-  timer = window.setInterval(() => {
-    currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
-  }, 1000)
+async function fetchData() {
+  try {
+    const [deviceRes, orderRes, siteRes, userRes] = await Promise.all([
+      getDevices({ page: 1, page_size: 1000 }),
+      getOrders({ page: 1, page_size: 1000 }),
+      getSitesManage({ page: 1, page_size: 100 }),
+      getWechatUsers({ page: 1, page_size: 1000 }),
+    ])
+    const devices = deviceRes?.data || []
+    const orders = orderRes?.data || []
+    const sites = siteRes?.data || []
+    const users = userRes?.data || []
 
-  // 设备类型分布图
-  if (typeChartRef.value) {
-    typeChart = echarts.init(typeChartRef.value)
-    typeChart.setOption({
+    stats.totalDevices = devices.length
+    stats.onlineDevices = devices.filter((d: any) => d.status === 'online').length
+    stats.totalOrders = orders.length
+    stats.totalSites = sites.length
+    stats.totalUsers = users.length
+
+    const totalAmount = orders
+      .filter((o: any) => o.status === 'completed')
+      .reduce((sum: number, o: any) => sum + (o.paid_amount || 0), 0)
+    stats.totalAmount = totalAmount.toFixed(2)
+
+    // 最近故障
+    try {
+      faultLoading.value = true
+      const faultRes = await getFaults({ page: 1, page_size: 10 })
+      recentFaults.value = (faultRes?.data || faultRes?.list || []).slice(0, 10)
+    } catch { /* ignore */ } finally {
+      faultLoading.value = false
+    }
+  } catch (e) { /* fallback to defaults */ }
+}
+
+function initCharts() {
+  // 订单类型饼图
+  if (orderChartRef.value) {
+    orderChart = echarts.init(orderChartRef.value)
+    orderChart.setOption({
       tooltip: { trigger: 'item' },
-      legend: { bottom: '0%' },
+      title: { text: '订单类型分布', left: 'center', top: 10, textStyle: { fontSize: 14 } },
+      legend: { bottom: 10 },
       series: [{
-        type: 'pie',
-        radius: ['40%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
-        label: { show: true, formatter: '{b}: {c}台' },
+        type: 'pie', radius: ['40%', '65%'],
+        data: [
+          { value: 60, name: '扫码充电' },
+          { value: 20, name: 'IC卡充电' },
+          { value: 12, name: '包月充电' },
+          { value: 8, name: '免费充电' },
+        ],
+      }],
+    })
+  }
+  // 站点分布饼图
+  if (siteChartRef.value) {
+    siteChart = echarts.init(siteChartRef.value)
+    siteChart.setOption({
+      tooltip: { trigger: 'item' },
+      title: { text: '设备类型分布', left: 'center', top: 10, textStyle: { fontSize: 14 } },
+      legend: { bottom: 10 },
+      series: [{
+        type: 'pie', radius: ['40%', '65%'],
         data: [
           { value: 85, name: '电单车充电桩' },
           { value: 42, name: '汽车充电桩' },
@@ -166,35 +211,39 @@ onMounted(() => {
       }],
     })
   }
-
-  // 在线率趋势图
-  if (onlineChartRef.value) {
-    onlineChart = echarts.init(onlineChartRef.value)
-    onlineChart.setOption({
+  // 月度统计柱状图
+  if (typeChartRef.value) {
+    typeChart = echarts.init(typeChartRef.value)
+    const months = []
+    for (let i = 5; i >= 0; i--) months.push(dayjs().subtract(i, 'month').format('MM月'))
+    typeChart.setOption({
       tooltip: { trigger: 'axis' },
-      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-      xAxis: { type: 'category', data: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'] },
-      yAxis: { type: 'value', min: 80, max: 100 },
-      series: [{
-        data: [98, 97, 96, 95, 97, 98, 99],
-        type: 'line',
-        smooth: true,
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(64,158,255,0.3)' },
-            { offset: 1, color: 'rgba(64,158,255,0.05)' },
-          ]),
-        },
-        itemStyle: { color: '#409eff' },
-      }],
+      title: { text: '月度统计数据', left: 'center', top: 10, textStyle: { fontSize: 14 } },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 50, containLabel: true },
+      legend: { data: ['订单数', '交易额(元)', '用电量(kWh)'], top: 20 },
+      xAxis: { type: 'category', data: months },
+      yAxis: { type: 'value' },
+      series: [
+        { name: '订单数', type: 'bar', data: [320, 420, 380, 510, 480, 350], itemStyle: { color: '#409eff' }, barGap: '10%' },
+        { name: '交易额(元)', type: 'bar', data: [1800, 2500, 2200, 3200, 2900, 2100], itemStyle: { color: '#67c23a' }, barGap: '10%' },
+      ],
     })
   }
+}
+
+onMounted(() => {
+  timer = window.setInterval(() => {
+    currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
+  }, 1000)
+  fetchData()
+  initCharts()
 })
 
 onUnmounted(() => {
   clearInterval(timer)
   typeChart?.dispose()
-  onlineChart?.dispose()
+  orderChart?.dispose()
+  siteChart?.dispose()
 })
 </script>
 

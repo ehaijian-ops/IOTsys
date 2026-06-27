@@ -1,14 +1,25 @@
 import http from './index'
 
-// 站点完整信息
+// 站点完整信息（同步后端 16 字段模型）
 export interface Site {
-  id: string
+  id: string | number
   name: string
   address: string
+  province: string
+  city: string
   latitude: number
   longitude: number
   contact: string
   phone: string
+  agent_id?: string | number
+  operator_id?: string | number
+  agent_name?: string
+  operator_name?: string
+  commission_rate: number
+  billing_scheme_id?: string | number
+  billing_scheme_name?: string
+  business_hours: string
+  image_url: string
   status: string
   device_count: number
   created_at: string
@@ -17,7 +28,7 @@ export interface Site {
 
 // 站点简要（供下拉选择）
 export interface SiteBrief {
-  id: string
+  id: string | number
   name: string
 }
 
@@ -25,10 +36,18 @@ export interface SiteBrief {
 export interface CreateSiteRequest {
   name: string
   address: string
+  province: string
+  city: string
   contact: string
   phone: string
   latitude: number
   longitude: number
+  agent_id?: string | number
+  operator_id?: string | number
+  commission_rate: number
+  billing_scheme_id?: string | number
+  business_hours: string
+  image_url: string
   status: string
 }
 
@@ -36,16 +55,43 @@ export interface CreateSiteRequest {
 export interface UpdateSiteRequest {
   name?: string
   address?: string
+  province?: string
+  city?: string
   contact?: string
   phone?: string
   latitude?: number
   longitude?: number
+  agent_id?: string | number
+  operator_id?: string | number
+  commission_rate?: number
+  billing_scheme_id?: string | number
+  business_hours?: string
+  image_url?: string
   status?: string
 }
 
-// 获取站点列表（CRUD用）
-export function getSitesManage() {
-  return http.get<any, { code: string; data: Site[] }>('/sites/manage')
+// 列表查询参数
+export interface SiteListParams {
+  page?: number
+  page_size?: number
+  keyword?: string
+  status?: string
+  province?: string
+  city?: string
+  agent_id?: string | number
+}
+
+// 分页响应
+export interface SiteListResponse {
+  items: Site[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// 获取站点列表（分页）
+export function getSitesManage(params?: SiteListParams) {
+  return http.get<any, { code: string; data: SiteListResponse }>('/sites/manage', { params })
 }
 
 // 获取站点详情
